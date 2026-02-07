@@ -8,6 +8,25 @@ import cv2
 import mediapipe as mp
 import numpy as np
 
+import os
+from deepface import DeepFace
+from scipy.spatial import distance
+from pymongo import MongoClient
+
+os.environ["TF_USE_LEGACY_KERAS"] = "1"
+
+
+def load_env(path: str = ".env") -> None:
+	file_path = Path(__file__).resolve().parent / path
+	if not file_path.exists():
+		return
+	for line in file_path.read_text().splitlines():
+		line = line.strip()
+		if not line or line.startswith("#") or "=" not in line:
+			continue
+		key, value = line.split("=", 1)
+		os.environ.setdefault(key.strip(), value.strip())
+
 try:
 	mp_pose = mp.solutions.pose
 	mp_drawing = mp.solutions.drawing_utils
@@ -56,6 +75,77 @@ class ExerciseState:
 	stable_down_frames: int = 0
 	stable_up_frames: int = 0
 
+class FaceIDManager:
+	def __init__(self, db_uri: Optional[str] = None):
+		load_env()
+		mongo_uri = db_uri or os.getenv("MONGO_URI", "mongodb://localhost:27017/")
+		self.client = MongoClient(mongo_uri)
+		self.db = self.client["Users"]
+		self.patients_col = self.db["Galit_Tauber"]
+		self.active_user = None
+		self.known_patients = []
+		self.last_error: Optional[str] = None
+		self.match_threshold = float(os.getenv("FACEID_THRESHOLD", "0.6"))
+
+	def load_db(self):
+		"""Pulls face vectors from MongoDB into memory."""
+		try:
+			self.known_patients = list(self.patients_col.find({}, {"name": 1, "face_vector": 1}))
+			print(f"Loaded {len(self.known_patients)} patients from Database.")
+			if not self.known_patients:
+				self.last_error = "No patients with face vectors found in DB. Run enroll_patients.py."
+			else:
+				self.last_error = None
+		except Exception as exc:
+			self.last_error = f"DB load failed: {exc}"
+			print(self.last_error)
+
+	def identify(self, frame):
+		"""Compares webcam frame against the database."""
+		try:
+			# Generate vector for the live person
+			results = DeepFace.represent(img_path=frame, model_name="Facenet512", enforce_detection=False)
+			if not results:
+				self.last_error = "No face detected in frame."
+				return None
+			live_vec = results[0]["embedding"]
+
+			# Compare to stored vectors
+			best_name = None
+			best_dist = None
+			for patient in self.known_patients:
+				dist = distance.cosine(live_vec, patient["face_vector"])
+				if best_dist is None or dist < best_dist:
+					best_dist = dist
+					best_name = patient.get("name")
+			if best_dist is not None and best_dist < self.match_threshold:
+				self.last_error = None
+				return best_name
+			if best_dist is None:
+				self.last_error = "No face vectors to compare."
+			else:
+				self.last_error = (
+					f"No match below threshold. Best={best_name} dist={best_dist:.3f} "
+					f"(threshold={self.match_threshold:.2f})"
+				)
+		except Exception as exc:
+			self.last_error = f"FaceID error: {exc}"
+			return None
+		return None
+
+	def get_status(self) -> str:
+		if self.active_user:
+			return f"Active user: {self.active_user}"
+		return self.last_error or "Scanning..."
+
+	def log_workout(self, exercise, reps):
+		"""Updates the specific user's workout log in MongoDB."""
+		if self.active_user:
+			self.db.workout_logs.update_one(
+				{"patient_name": self.active_user, "exercise": exercise, "date": time.strftime("%Y-%m-%d")},
+				{"$set": {"reps": reps, "last_sync": time.time()}},
+				upsert=True
+			)
 
 class ExerciseDetector:
 	def __init__(self) -> None:
@@ -581,6 +671,16 @@ def main() -> None:
 		raise RuntimeError("Could not open webcam.")
 
 	detector = ExerciseDetector()
+	face_id = FaceIDManager()
+	face_id.load_db()
+	last_id_time = 0.0
+	last_sync_time = 0.0
+	last_rep_time: Optional[float] = None
+	last_total_reps = 0
+	last_status_log = 0.0
+	last_candidate: Optional[str] = None
+	candidate_hits = 0
+	last_activity_time: Optional[float] = None
 	if not USE_TASKS:
 		with mp_pose.Pose(
 			model_complexity=1,
@@ -592,6 +692,26 @@ def main() -> None:
 				ret, frame = cap.read()
 				if not ret:
 					break
+
+				now = time.time()
+				if last_activity_time is not None and (now - last_activity_time) > 10:
+					face_id.active_user = None
+				if face_id.active_user is None and (now - last_id_time > 1.5):
+					candidate = face_id.identify(frame)
+					last_id_time = now
+					if candidate:
+						if candidate == last_candidate:
+							candidate_hits += 1
+						else:
+							last_candidate = candidate
+							candidate_hits = 1
+						if candidate_hits >= 2:
+							face_id.active_user = candidate
+							last_candidate = None
+							candidate_hits = 0
+				if now - last_status_log > 3:
+					print(f"[FaceID] {face_id.get_status()}")
+					last_status_log = now
 
 				image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 				image.flags.writeable = False
@@ -606,14 +726,25 @@ def main() -> None:
 						mp_drawing.draw_landmarks(
 							image, results.pose_landmarks, POSE_CONNECTIONS
 						)
+					last_activity_time = now
 					lm = extract_landmarks(results.pose_landmarks.landmark)
 					ex_name, ex_state, status_text = detector.process(lm)
-					draw_text(image, f"Exercise: {ex_name}", (20, 30))
-					draw_text(image, f"Reps: {ex_state.reps}", (20, 60))
-					draw_text(image, f"State: {ex_state.state}", (20, 90))
-					draw_text(image, status_text, (20, 120))
+					total_reps = detector.states["squat"].reps + detector.states["lateral_lunge"].reps
+					if total_reps != last_total_reps:
+						last_total_reps = total_reps
+						last_rep_time = now
+						last_activity_time = now
+					if face_id.active_user and ex_name != "Detecting..." and (now - last_sync_time > 5):
+						face_id.log_workout(ex_name, ex_state.reps)
+						last_sync_time = now
+					draw_text(image, f"User: {face_id.active_user or 'Scanning...'}", (20, 30), (255, 255, 0))
+					draw_text(image, f"Exercise: {ex_name}", (20, 60))
+					draw_text(image, f"Reps: {ex_state.reps}", (20, 90))
+					draw_text(image, f"State: {ex_state.state}", (20, 120))
+					draw_text(image, status_text, (20, 150))
 				else:
-					draw_text(image, "No pose detected", (20, 30), (0, 0, 255))
+					draw_text(image, f"User: {face_id.active_user or 'Scanning...'}", (20, 30), (255, 255, 0))
+					draw_text(image, "No pose detected", (20, 60), (0, 0, 255))
 
 				draw_text(image, "Keys: A Auto | 1 Squat | 2 Lunge | Q Quit", (20, h - 20))
 
@@ -666,6 +797,26 @@ def main() -> None:
 				if not ret:
 					break
 
+				now = time.time()
+				if last_activity_time is not None and (now - last_activity_time) > 10:
+					face_id.active_user = None
+				if face_id.active_user is None and (now - last_id_time > 1.5):
+					candidate = face_id.identify(frame)
+					last_id_time = now
+					if candidate:
+						if candidate == last_candidate:
+							candidate_hits += 1
+						else:
+							last_candidate = candidate
+							candidate_hits = 1
+						if candidate_hits >= 2:
+							face_id.active_user = candidate
+							last_candidate = None
+							candidate_hits = 0
+				if now - last_status_log > 3:
+					print(f"[FaceID] {face_id.get_status()}")
+					last_status_log = now
+
 				rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 				mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
 				ts = int(time.time() * 1000)
@@ -677,14 +828,25 @@ def main() -> None:
 				if result.pose_landmarks:
 					landmarks = result.pose_landmarks[0]
 					draw_landmarks_simple(image, landmarks)
+					last_activity_time = now
 					lm = extract_landmarks(landmarks)
 					ex_name, ex_state, status_text = detector.process(lm)
-					draw_text(image, f"Exercise: {ex_name}", (20, 30))
-					draw_text(image, f"Reps: {ex_state.reps}", (20, 60))
-					draw_text(image, f"State: {ex_state.state}", (20, 90))
-					draw_text(image, status_text, (20, 120))
+					total_reps = detector.states["squat"].reps + detector.states["lateral_lunge"].reps
+					if total_reps != last_total_reps:
+						last_total_reps = total_reps
+						last_rep_time = now
+						last_activity_time = now
+					if face_id.active_user and ex_name != "Detecting..." and (now - last_sync_time > 5):
+						face_id.log_workout(ex_name, ex_state.reps)
+						last_sync_time = now
+					draw_text(image, f"User: {face_id.active_user or 'Scanning...'}", (20, 30), (255, 255, 0))
+					draw_text(image, f"Exercise: {ex_name}", (20, 60))
+					draw_text(image, f"Reps: {ex_state.reps}", (20, 90))
+					draw_text(image, f"State: {ex_state.state}", (20, 120))
+					draw_text(image, status_text, (20, 150))
 				else:
-					draw_text(image, "No pose detected", (20, 30), (0, 0, 255))
+					draw_text(image, f"User: {face_id.active_user or 'Scanning...'}", (20, 30), (255, 255, 0))
+					draw_text(image, "No pose detected", (20, 60), (0, 0, 255))
 
 				draw_text(image, "Keys: A Auto | 1 Squat | 2 Lunge | Q Quit", (20, h - 20))
 
