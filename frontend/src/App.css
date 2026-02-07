@@ -16,6 +16,7 @@ body {
 
 .app {
   min-height: 100vh;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   padding-bottom: 2rem;
 }
 
@@ -277,110 +278,6 @@ body {
   color: #2d3748;
 }
 
-/* Current Session Section */
-.current-exercise-box {
-  background: white;
-  border-radius: 10px;
-  padding: 1.25rem;
-  margin-bottom: 1.5rem;
-  border: 2px solid #667eea;
-  box-shadow: 0 2px 4px rgba(102, 126, 234, 0.1);
-}
-
-.current-exercise-header {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  margin-bottom: 1rem;
-}
-
-.exercise-badge {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
-  padding: 0.35rem 0.75rem;
-  border-radius: 20px;
-  font-size: 0.75rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.exercise-name-large {
-  font-size: 1.5rem;
-  font-weight: 700;
-  color: #2d3748;
-}
-
-.current-exercise-stats {
-  display: flex;
-  gap: 2rem;
-  margin-bottom: 1rem;
-  padding: 1rem;
-  background: #f7fafc;
-  border-radius: 8px;
-}
-
-.current-exercise-stats .stat-item {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.stat-label {
-  color: #718096;
-  font-weight: 500;
-}
-
-.stat-value {
-  font-size: 1.5rem;
-  font-weight: 700;
-  color: #667eea;
-}
-
-.feedback-section {
-  margin-top: 1rem;
-  padding: 1rem;
-  background: #edf2f7;
-  border-radius: 8px;
-}
-
-.feedback-label {
-  font-weight: 600;
-  color: #4a5568;
-  margin-bottom: 0.5rem;
-  font-size: 0.9rem;
-}
-
-.feedback-item {
-  padding: 0.5rem;
-  margin-bottom: 0.5rem;
-  background: white;
-  border-radius: 6px;
-  color: #2d3748;
-  font-size: 0.9rem;
-  border-left: 3px solid #667eea;
-  padding-left: 0.75rem;
-}
-
-.feedback-item:last-child {
-  margin-bottom: 0;
-}
-
-/* Section Divider */
-.section-divider {
-  margin: 1.5rem 0 1rem 0;
-  padding-bottom: 0.5rem;
-  border-bottom: 2px solid #e2e8f0;
-}
-
-.section-divider h4 {
-  color: #4a5568;
-  font-size: 1rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
 /* Completed Exercise Items */
 .completed-exercise-item {
   background: white;
@@ -388,12 +285,29 @@ body {
   padding: 1rem;
   margin-bottom: 1rem;
   border-left: 4px solid #48bb78;
-  transition: transform 0.2s ease;
+  transition: all 0.3s ease;
 }
 
 .completed-exercise-item:hover {
   transform: translateX(4px);
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+/* Active Exercise (current one being performed) */
+.completed-exercise-item.active-exercise {
+  background: linear-gradient(135deg, #f0f7ff 0%, #e6f2ff 100%);
+  border-left: 4px solid #667eea;
+  box-shadow: 0 4px 8px rgba(102, 126, 234, 0.2);
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+@keyframes pulse-glow {
+  0%, 100% {
+    box-shadow: 0 4px 8px rgba(102, 126, 234, 0.2);
+  }
+  50% {
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+  }
 }
 
 .exercise-header-row {
@@ -414,6 +328,22 @@ body {
   justify-content: center;
   font-weight: 700;
   font-size: 0.85rem;
+  flex-shrink: 0;
+}
+
+/* Active exercise indicator */
+.active-exercise .exercise-number {
+  background: #667eea;
+  animation: pulse-indicator 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse-indicator {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.1);
+  }
 }
 
 .exercise-name {
@@ -421,6 +351,11 @@ body {
   color: #2d3748;
   font-size: 1.1rem;
   flex: 1;
+}
+
+.active-exercise .exercise-name {
+  color: #667eea;
+  font-weight: 700;
 }
 
 .exercise-reps {
@@ -432,11 +367,22 @@ body {
   font-size: 0.9rem;
 }
 
+.active-exercise .exercise-reps {
+  background: #667eea;
+  color: white;
+  font-weight: 600;
+}
+
 .exercise-feedback {
   padding: 0.75rem;
   background: #f7fafc;
   border-radius: 6px;
   font-size: 0.9rem;
+}
+
+.active-exercise .exercise-feedback {
+  background: white;
+  border: 1px solid #e6f2ff;
 }
 
 .exercise-feedback strong {
@@ -451,7 +397,7 @@ body {
   line-height: 1.5;
 }
 
-/* Medical Records (existing) */
+/* Medical Records */
 .record-item {
   margin-bottom: 1rem;
   padding-bottom: 1rem;
@@ -560,10 +506,5 @@ body {
   
   .exercise-header-row {
     flex-wrap: wrap;
-  }
-  
-  .current-exercise-stats {
-    flex-direction: column;
-    gap: 1rem;
   }
 }
