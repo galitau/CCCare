@@ -32,7 +32,6 @@ export default function useAppState() {
       history: [
         {
           date: new Date(2026, 1, 5),
-          duration: "30 minutes",
           avgHeartRate: 78,
           maxHeartRate: 95,
           avgOxygen: 97,
@@ -104,6 +103,8 @@ export default function useAppState() {
   const exerciseIntervalRef = useRef(null);
   const webcamStreamRef = useRef(null);
   const videoRef = useRef(null);
+  const wsRef = useRef(null);
+  const [wsConnected, setWsConnected] = useState(false);
 
   useEffect(() => {
     return () => {
@@ -111,6 +112,65 @@ export default function useAppState() {
       if (exerciseIntervalRef.current) clearInterval(exerciseIntervalRef.current);
       if (webcamStreamRef.current) {
         webcamStreamRef.current.getTracks().forEach(track => track.stop());
+      }
+      if (wsRef.current) {
+        try { wsRef.current.close(); } catch (e) {}
+        wsRef.current = null;
+      }
+    };
+  }, []);
+
+  // WebSocket connection to backend for live vitals (hr / spo2)
+  useEffect(() => {
+    let reconnectTimer = null;
+
+    function connectWs() {
+      const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+      const host = window.location.hostname || 'localhost';
+      const url = `${protocol}://${host}:5176`;
+
+      try {
+        const ws = new WebSocket(url);
+        wsRef.current = ws;
+
+        ws.onopen = () => {
+          setWsConnected(true);
+        };
+
+        ws.onmessage = (evt) => {
+          try {
+            const data = JSON.parse(evt.data);
+            if (data.hr !== undefined) setHeartRate(data.hr);
+            if (data.spo2 !== undefined) setOxygen(data.spo2);
+            if (data.br !== undefined) setBreathing(data.br);
+          } catch (e) {
+            // ignore non-JSON messages
+          }
+        };
+
+        ws.onclose = () => {
+          setWsConnected(false);
+          // attempt reconnect
+          if (reconnectTimer) clearTimeout(reconnectTimer);
+          reconnectTimer = setTimeout(connectWs, 2000);
+        };
+
+        ws.onerror = () => {
+          try { ws.close(); } catch (e) {}
+        };
+      } catch (e) {
+        setWsConnected(false);
+        reconnectTimer = setTimeout(connectWs, 2000);
+      }
+    }
+
+    connectWs();
+
+    return () => {
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (wsRef.current) {
+        try { wsRef.current.close(); } catch (e) {}
+        wsRef.current = null;
       }
     };
   }, []);
@@ -122,26 +182,16 @@ export default function useAppState() {
   }, [selectedPatient]);
 
   const startVitalsMonitoring = () => {
-    vitalsIntervalRef.current = setInterval(() => {
-      if (!selectedPatient || !sessionActive) return;
-
-      const hr = Math.floor(60 + Math.random() * 40);
-      const br = Math.floor(12 + Math.random() * 8);
-      const ox = Math.floor(95 + Math.random() * 5);
-
-      setHeartRate(hr);
-      setBreathing(br);
-      setOxygen(ox);
-
-      const maxHeartRate = 220 - selectedPatient.age;
-      const targetHeartRate = maxHeartRate * 0.7;
-
-      if (hr > targetHeartRate) {
-        setShowHeartRateAlert(true);
-      } else {
-        setShowHeartRateAlert(false);
-      }
-    }, 2000);
+    // vitals are provided by the backend WebSocket; no local generator.
+    // Ensure any previous generator is cleared.
+    if (vitalsIntervalRef.current) {
+      clearInterval(vitalsIntervalRef.current);
+      vitalsIntervalRef.current = null;
+    }
+    // Reset placeholders until server data arrives
+    setHeartRate('--');
+    setBreathing('--');
+    setOxygen('--');
   };
 
   const stopVitalsMonitoring = () => {
@@ -337,7 +387,6 @@ export default function useAppState() {
       
       const newSession = {
         date: new Date(),
-        duration: "30 minutes",
         avgHeartRate: 78,
         maxHeartRate: 95,
         avgOxygen: 97,

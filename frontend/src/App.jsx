@@ -193,7 +193,6 @@ export default function App() {
                           })}
                         </div>
                         <div className="history-stats">
-                          <div><strong>Duration:</strong> {session.duration}</div>
                           <div><strong>Avg HR:</strong> {session.avgHeartRate} bpm</div>
                           <div><strong>Max HR:</strong> {session.maxHeartRate} bpm</div>
                           <div><strong>Avg O₂:</strong> {session.avgOxygen}%</div>
