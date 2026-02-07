@@ -474,6 +474,9 @@ class ExerciseDetector:
 		st = self.states["squat"]
 		knee_l = angle_3pt_2d(lm["hip_l"], lm["knee_l"], lm["ankle_l"])
 		knee_r = angle_3pt_2d(lm["hip_r"], lm["knee_r"], lm["ankle_r"])
+		body_l = angle_3pt_2d(lm["shoulder_l"], lm["hip_l"], lm["ankle_l"])
+		body_r = angle_3pt_2d(lm["shoulder_r"], lm["hip_r"], lm["ankle_r"])
+		avg_body = (body_l + body_r) / 2.0
 		min_knee = min(knee_l, knee_r)
 		if st.ema_knee is None:
 			st.ema_knee = min_knee
@@ -500,7 +503,18 @@ class ExerciseDetector:
 				st.reps += 1
 			self._transition(st, "up", now)
 
-		return "Squats", st, f"Knee: {st.ema_knee:.0f}°"
+		feedback = ""
+		if st.state == "down":
+			if st.ema_knee > 120:
+				feedback = "Go lower"
+			elif abs(knee_l - knee_r) > 20:
+				feedback = "Keep knees even"
+			elif avg_body < 150:
+				feedback = "Keep your back straighter"
+		status = f"Knee: {st.ema_knee:.0f}°"
+		if feedback:
+			status = f"{status} | {feedback}"
+		return "Squats", st, status
 
 	def _detect_lateral_lunge(self, lm: Dict[str, np.ndarray]) -> Tuple[str, ExerciseState, str]:
 		st = self.states["lateral_lunge"]
@@ -520,7 +534,20 @@ class ExerciseDetector:
 				st.reps += 1
 			self._transition(st, "up", now)
 		side = "L" if down_left else "R" if down_right else ""
-		return "Dynamic Hip Mobility Lateral Lunge", st, f"Side: {side}"
+		feedback = ""
+		if not down_left and not down_right:
+			if ankle_span < 0.22:
+				feedback = "Step wider"
+			elif abs(lateral_shift) < 0.01:
+				feedback = "Shift your hips sideways"
+		elif down_left and knee_r < 150:
+			feedback = "Straighten the right leg"
+		elif down_right and knee_l < 150:
+			feedback = "Straighten the left leg"
+		status = f"Side: {side}"
+		if feedback:
+			status = f"{status} | {feedback}"
+		return "Dynamic Hip Mobility Lateral Lunge", st, status
 
 	def _detect_chest_press(self, lm: Dict[str, np.ndarray]) -> Tuple[str, ExerciseState, str]:
 		st = self.states["chest_press"]
