@@ -173,6 +173,22 @@ class ExerciseDetector:
 			"thoracic_rotation": ExerciseState(),
 		}
 
+	def reset_exercises(self, names: Optional[set[str]] = None) -> None:
+		reset_targets = names or set(self.states.keys())
+		for name in reset_targets:
+			st = self.states.get(name)
+			if not st:
+				continue
+			st.reps = 0
+			st.state = "down"
+			st.last_side = None
+			st.last_transition_time = time.time()
+			st.hold_start = None
+			st.hold_seconds = 0.0
+			st.ema_knee = None
+			st.stable_down_frames = 0
+			st.stable_up_frames = 0
+
 	def set_exercise(self, name: str) -> None:
 		if name in self.allowed_exercises:
 			self.exercise = name
@@ -665,6 +681,23 @@ def draw_text(img, text: str, org: Tuple[int, int], color=(0, 255, 0)) -> None:
 	cv2.putText(img, text, org, cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv2.LINE_AA)
 
 
+def _landmark_visible(lm, min_visibility: float) -> bool:
+	visibility = getattr(lm, "visibility", None)
+	if visibility is not None and visibility < min_visibility:
+		return False
+	return 0.0 <= lm.x <= 1.0 and 0.0 <= lm.y <= 1.0
+
+
+def full_body_visible(landmarks, min_visibility: float = 0.5, min_height_ratio: float = 0.45) -> bool:
+	required = [11, 12, 23, 24, 27, 28]
+	for idx in required:
+		if not _landmark_visible(landmarks[idx], min_visibility):
+			return False
+	shoulder_y = (landmarks[11].y + landmarks[12].y) / 2.0
+	ankle_y = (landmarks[27].y + landmarks[28].y) / 2.0
+	return abs(ankle_y - shoulder_y) >= min_height_ratio
+
+
 def main() -> None:
 	cap = cv2.VideoCapture(0)
 	if not cap.isOpened():
@@ -681,6 +714,7 @@ def main() -> None:
 	last_candidate: Optional[str] = None
 	candidate_hits = 0
 	last_activity_time: Optional[float] = None
+	last_active_user: Optional[str] = None
 	if not USE_TASKS:
 		with mp_pose.Pose(
 			model_complexity=1,
@@ -709,6 +743,11 @@ def main() -> None:
 							face_id.active_user = candidate
 							last_candidate = None
 							candidate_hits = 0
+				if face_id.active_user != last_active_user:
+					if face_id.active_user is not None:
+						detector.reset_exercises({"squat", "lateral_lunge"})
+						last_total_reps = 0
+					last_active_user = face_id.active_user
 				if now - last_status_log > 3:
 					print(f"[FaceID] {face_id.get_status()}")
 					last_status_log = now
@@ -726,15 +765,22 @@ def main() -> None:
 						mp_drawing.draw_landmarks(
 							image, results.pose_landmarks, POSE_CONNECTIONS
 						)
-					last_activity_time = now
-					lm = extract_landmarks(results.pose_landmarks.landmark)
-					ex_name, ex_state, status_text = detector.process(lm)
+					if full_body_visible(results.pose_landmarks.landmark):
+						last_activity_time = now
+						lm = extract_landmarks(results.pose_landmarks.landmark)
+						ex_name, ex_state, status_text = detector.process(lm)
+						full_body_ok = True
+					else:
+						full_body_ok = False
+						ex_name = "Detecting..."
+						ex_state = detector.states["squat"]
+						status_text = "Step back to show full body"
 					total_reps = detector.states["squat"].reps + detector.states["lateral_lunge"].reps
 					if total_reps != last_total_reps:
 						last_total_reps = total_reps
 						last_rep_time = now
 						last_activity_time = now
-					if face_id.active_user and ex_name != "Detecting..." and (now - last_sync_time > 5):
+					if face_id.active_user and full_body_ok and (now - last_sync_time > 5):
 						face_id.log_workout(ex_name, ex_state.reps)
 						last_sync_time = now
 					draw_text(image, f"User: {face_id.active_user or 'Scanning...'}", (20, 30), (255, 255, 0))
