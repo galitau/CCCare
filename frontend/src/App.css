@@ -1,25 +1,30 @@
-/* ===== GLOBAL RESET ===== */
+html,
+body,
+#root {
+  height: 100%;
+}
+
 * {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
 }
 
-html, body, #root {
-  height: 100%;
-  width: 100%;
-}
-
-/* ===== APP ===== */
-.app {
+body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   min-height: 100vh;
-  padding-bottom: 2rem;
 }
 
-/* ===== HEADER (FULL WIDTH) ===== */
+.app {
+  min-height: 100vh;
+  background: linear-gradient(135deg, #6a5acd, #7b5fcf);
+}
+
 .header {
   background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
   padding: 2rem;
@@ -40,33 +45,38 @@ html, body, #root {
   font-weight: 300;
 }
 
-/* ===== MAIN LAYOUT (BOXED LIKE YOUR 2ND PIC) ===== */
 .main-container {
   display: grid;
   grid-template-columns: 380px 1fr;
   gap: 2rem;
 
-  /* this is the “boxed centered” look */
-  max-width: 1600px;
-  margin: 2rem auto;
-  padding: 0 2rem;
+  /* FULLSCREEN FIX */
+  flex: 1;
+  width: 100%;
+  margin: 0;
+  padding: 2rem;
+
+  /* FORCE GRID TO FILL HEIGHT */
+  align-content: stretch;
 }
 
-/* Make left panel stack cards with spacing (Session Control + Attendance List) */
 .left-panel {
   display: flex;
   flex-direction: column;
-  gap: 2rem;
+  gap: 1.5rem;
 }
 
-/* Right panel also stacks its cards cleanly */
 .right-panel {
   display: flex;
   flex-direction: column;
-  gap: 2rem;
+  gap: 1.5rem;
 }
 
-/* ===== CARD ===== */
+.left-panel,
+.right-panel {
+  height: 100%;
+}
+
 .card {
   background: white;
   border-radius: 16px;
@@ -80,7 +90,7 @@ html, body, #root {
   color: #2d3748;
 }
 
-/* ===== SESSION CONTROL ===== */
+/* Session Control */
 .session-buttons {
   display: flex;
   gap: 1rem;
@@ -140,7 +150,7 @@ html, body, #root {
   color: #742a2a;
 }
 
-/* ===== PATIENT SEARCH ===== */
+/* Patient Search */
 .search-input {
   width: 100%;
   padding: 0.75rem 1rem;
@@ -160,7 +170,6 @@ html, body, #root {
   overflow-y: auto;
 }
 
-/* IMPORTANT: force readable text color for non-selected patients */
 .patient-item {
   padding: 1rem;
   margin-bottom: 0.75rem;
@@ -168,7 +177,6 @@ html, body, #root {
   cursor: pointer;
   transition: all 0.3s ease;
   background: #f7fafc;
-  color: #2d3748;
 }
 
 .patient-item:hover {
@@ -192,7 +200,7 @@ html, body, #root {
   opacity: 0.8;
 }
 
-/* ===== DASHBOARD ===== */
+/* Dashboard */
 .patient-header {
   border-bottom: 2px solid #e2e8f0;
   padding-bottom: 1rem;
@@ -214,7 +222,7 @@ html, body, #root {
 
 .vitals-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 1.5rem;
   margin-bottom: 2rem;
 }
@@ -224,6 +232,11 @@ html, body, #root {
   border-radius: 12px;
   padding: 1.5rem;
   border-left: 4px solid;
+  transition: transform 0.3s ease;
+}
+
+.vital-card:hover {
+  transform: translateY(-4px);
 }
 
 .vital-card.heart-rate {
@@ -238,10 +251,15 @@ html, body, #root {
   border-left-color: #48bb78;
 }
 
+.vital-card.current-exercise {
+  border-left-color: #9f7aea;
+}
+
 .vital-label {
   font-size: 0.9rem;
   color: #718096;
   margin-bottom: 0.5rem;
+  font-weight: 500;
 }
 
 .vital-value {
@@ -266,7 +284,26 @@ html, body, #root {
   text-align: center;
 }
 
-/* ===== MEDICAL ===== */
+/* Exercise Info in Vital Card */
+.exercise-info {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid #e2e8f0;
+}
+
+.exercise-name {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #5a67d8;
+  margin-bottom: 0.25rem;
+}
+
+.exercise-reps {
+  font-size: 0.9rem;
+  color: #718096;
+  font-weight: 500;
+}
+
 .medical-section {
   background: #f7fafc;
   border-radius: 12px;
@@ -302,7 +339,6 @@ html, body, #root {
   color: #718096;
 }
 
-/* ===== HISTORY ===== */
 .history-item {
   background: white;
   border-radius: 8px;
@@ -337,7 +373,7 @@ html, body, #root {
   margin-top: 0.5rem;
 }
 
-/* ===== WEBCAM ===== */
+/* Webcam Monitor */
 .webcam-container {
   position: relative;
   background: #1a202c;
@@ -384,7 +420,6 @@ html, body, #root {
   50% { opacity: 0.3; }
 }
 
-/* ===== EXERCISE ===== */
 .exercise-metrics {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -428,7 +463,6 @@ html, body, #root {
   color: #7c2d12;
 }
 
-/* ===== WELCOME ===== */
 .welcome-message {
   text-align: center;
   padding: 4rem 2rem;
@@ -443,16 +477,42 @@ html, body, #root {
 .welcome-message p {
   font-size: 1.1rem;
   color: #718096;
-  margin-bottom: 2rem;
 }
 
-.hidden {
-  display: none;
-}
-
-/* ===== RESPONSIVE ===== */
+/* Responsive Design */
 @media (max-width: 1200px) {
   .main-container {
     grid-template-columns: 1fr;
   }
+}
+
+@media (max-width: 768px) {
+  .header h1 {
+    font-size: 1.8rem;
+  }
+  
+  .subtitle {
+    font-size: 0.95rem;
+  }
+  
+  .main-container {
+    padding: 0 1rem;
+  }
+  
+  .session-buttons {
+    flex-direction: column;
+  }
+  
+  .vitals-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .exercise-metrics {
+    grid-template-columns: 1fr;
+  }
+
+  body {
+  outline: 10px solid red !important;
+}
+
 }

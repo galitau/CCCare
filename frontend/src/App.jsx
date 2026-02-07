@@ -14,6 +14,8 @@ export default function App() {
   const [currentAngle, setCurrentAngle] = useState('0°');
   const [postureStatus, setPostureStatus] = useState({ good: true, text: '✅ Good Form' });
   const [exerciseQuality, setExerciseQuality] = useState('92%');
+  const [currentExercise, setCurrentExercise] = useState('Arm Raises');
+  const [sessionNumber, setSessionNumber] = useState(1);
   const [patients, setPatients] = useState([
     {
       id: 1,
@@ -114,6 +116,13 @@ export default function App() {
     };
   }, []);
 
+  // Update session number when patient is selected
+  useEffect(() => {
+    if (selectedPatient) {
+      setSessionNumber(selectedPatient.history.length + 1);
+    }
+  }, [selectedPatient]);
+
   const startVitalsMonitoring = () => {
     vitalsIntervalRef.current = setInterval(() => {
       if (!selectedPatient || !sessionActive) return;
@@ -146,6 +155,11 @@ export default function App() {
 
   const startExerciseTracking = () => {
     let repCount = 0;
+    const exercises = ['Arm Raises', 'Leg Lifts', 'Squats', 'Side Bends', 'Knee Raises'];
+    let currentExerciseIndex = 0;
+    
+    // Set initial exercise
+    setCurrentExercise(exercises[0]);
     
     exerciseIntervalRef.current = setInterval(() => {
       if (!sessionActive) return;
@@ -153,6 +167,12 @@ export default function App() {
       if (Math.random() > 0.7) {
         repCount++;
         setRepCount(repCount);
+        
+        // Change exercise every 10 reps
+        if (repCount % 10 === 0 && repCount > 0) {
+          currentExerciseIndex = (currentExerciseIndex + 1) % exercises.length;
+          setCurrentExercise(exercises[currentExerciseIndex]);
+        }
       }
 
       const angle = Math.floor(Math.random() * 180);
@@ -175,6 +195,7 @@ export default function App() {
     }
     setRepCount(0);
     setCurrentAngle('0°');
+    setCurrentExercise('Arm Raises');
   };
 
   const startWebcam = async () => {
@@ -240,6 +261,9 @@ export default function App() {
         ...prev,
         history: [newSession, ...prev.history]
       }));
+      
+      // Increment session number for next session
+      setSessionNumber(prev => prev + 1);
     }
   };
 
@@ -333,7 +357,7 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Vitals */}
+                {/* Vitals Grid - Now with 4 cards */}
                 <div className="vitals-grid">
                   <div className="vital-card heart-rate">
                     <div className="vital-label">❤️ Heart Rate</div>
@@ -362,6 +386,24 @@ export default function App() {
                       <span>{oxygen}</span>
                       <span className="vital-unit">%</span>
                     </div>
+                  </div>
+
+                  <div className="vital-card current-exercise">
+                    <div className="vital-label">🏋️ Current Session</div>
+                    <div className="vital-value">
+                      <span>#{sessionNumber}</span>
+                    </div>
+                    {sessionActive ? (
+                      <div className="exercise-info">
+                        <div className="exercise-name">{currentExercise}</div>
+                        <div className="exercise-reps">{repCount} reps completed</div>
+                      </div>
+                    ) : (
+                      <div className="exercise-info">
+                        <div className="exercise-name">Not Started</div>
+                        <div className="exercise-reps">-- reps</div>
+                      </div>
+                    )}
                   </div>
                 </div>
 
