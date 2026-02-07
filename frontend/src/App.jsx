@@ -203,6 +203,16 @@ export default function App() {
     setCurrentReps(0);
     setCurrentFeedback([]);
     
+    // Add initial exercise to the list immediately (with 0 reps)
+    setSessionExercises([{
+      name: exercises[0],
+      reps: 0,
+      feedback: ["Starting exercise..."],
+      duration: 0,
+      completedAt: new Date(),
+      isActive: true
+    }]);
+    
     exerciseIntervalRef.current = setInterval(() => {
       if (!sessionActive) return;
 
@@ -216,19 +226,35 @@ export default function App() {
         const feedback = generateFeedback(angle);
         setCurrentFeedback(feedback);
         
+        // Update the current (first) exercise in the list with new rep count and feedback
+        setSessionExercises(prev => {
+          const updated = [...prev];
+          if (updated.length > 0) {
+            updated[0] = {
+              ...updated[0],
+              reps: currentRepCount,
+              feedback: feedback,
+              isActive: true
+            };
+          }
+          return updated;
+        });
+        
         // After 8-12 reps, move to next exercise
         const targetReps = 8 + Math.floor(Math.random() * 5); // 8-12 reps
         if (currentRepCount >= targetReps) {
-          // Save completed exercise to session history
-          const completedExercise = {
-            name: exercises[currentExerciseIndex],
-            reps: currentRepCount,
-            feedback: feedback,
-            duration: Math.round((Date.now() - exerciseStartTime) / 1000),
-            completedAt: new Date()
-          };
-          
-          setSessionExercises(prev => [...prev, completedExercise]);
+          // Mark current exercise as completed
+          setSessionExercises(prev => {
+            const updated = [...prev];
+            if (updated.length > 0) {
+              updated[0] = {
+                ...updated[0],
+                isActive: false,
+                duration: Math.round((Date.now() - exerciseStartTime) / 1000)
+              };
+            }
+            return updated;
+          });
           
           // Move to next exercise
           currentExerciseIndex = (currentExerciseIndex + 1) % exercises.length;
@@ -238,12 +264,34 @@ export default function App() {
           setCurrentExercise(exercises[currentExerciseIndex]);
           setCurrentReps(0);
           setCurrentFeedback(["Starting new exercise..."]);
+          
+          // Add new exercise to the top of the list
+          setSessionExercises(prev => [{
+            name: exercises[currentExerciseIndex],
+            reps: 0,
+            feedback: ["Starting exercise..."],
+            duration: 0,
+            completedAt: new Date(),
+            isActive: true
+          }, ...prev]);
         }
       } else {
         // Update feedback even when not counting reps
         const angle = Math.floor(Math.random() * 180);
         const feedback = generateFeedback(angle);
         setCurrentFeedback(feedback);
+        
+        // Update current exercise feedback
+        setSessionExercises(prev => {
+          const updated = [...prev];
+          if (updated.length > 0 && updated[0].isActive) {
+            updated[0] = {
+              ...updated[0],
+              feedback: feedback
+            };
+          }
+          return updated;
+        });
       }
     }, 2000);
   };
@@ -302,8 +350,9 @@ export default function App() {
     setShowHeartRateAlert(false);
 
     if (selectedPatient) {
-      // Create summary of exercises completed
-      const exerciseSummary = sessionExercises
+      // Create summary of exercises completed (filter out the active one with 0 reps if exists)
+      const completedExercises = sessionExercises.filter(ex => !ex.isActive || ex.reps > 0);
+      const exerciseSummary = completedExercises
         .map(ex => `${ex.name} (${ex.reps} reps)`)
         .join(', ');
       
@@ -426,7 +475,6 @@ export default function App() {
                   <div className="patient-meta">
                     <span>👤 Age: {selectedPatient.age}</span>
                     <span>🏥 {selectedPatient.condition}</span>
-                    <span>🩸 Blood Type: {selectedPatient.medicalRecords.bloodType}</span>
                   </div>
                 </div>
 
@@ -472,54 +520,30 @@ export default function App() {
                     </p>
                   ) : (
                     <>
-                      {/* Current Exercise in Progress */}
-                      <div className="current-exercise-box">
-                        <div className="current-exercise-header">
-                          <span className="exercise-badge">In Progress</span>
-                          <span className="exercise-name-large">{currentExercise}</span>
-                        </div>
-                        <div className="current-exercise-stats">
-                          <div className="stat-item">
-                            <span className="stat-label">Reps Completed:</span>
-                            <span className="stat-value">{currentReps}</span>
-                          </div>
-                        </div>
-                        {currentFeedback.length > 0 && (
-                          <div className="feedback-section">
-                            <div className="feedback-label">Real-time Feedback:</div>
-                            {currentFeedback.map((feedback, idx) => (
-                              <div key={idx} className="feedback-item">
-                                {feedback}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Completed Exercises This Session */}
-                      {sessionExercises.length > 0 && (
-                        <>
-                          <div className="section-divider">
-                            <h4>Completed This Session</h4>
-                          </div>
-                          {sessionExercises.map((exercise, idx) => (
-                            <div key={idx} className="completed-exercise-item">
-                              <div className="exercise-header-row">
-                                <span className="exercise-number">#{idx + 1}</span>
-                                <span className="exercise-name">{exercise.name}</span>
-                                <span className="exercise-reps">{exercise.reps} reps</span>
-                              </div>
-                              {exercise.feedback && exercise.feedback.length > 0 && (
-                                <div className="exercise-feedback">
-                                  <strong>Feedback:</strong>
-                                  {exercise.feedback.map((fb, fbIdx) => (
-                                    <div key={fbIdx} className="feedback-text">• {fb}</div>
-                                  ))}
-                                </div>
-                              )}
+                      {sessionExercises.length === 0 ? (
+                        <p style={{textAlign: 'center', color: '#718096', padding: '2rem'}}>
+                          Starting session...
+                        </p>
+                      ) : (
+                        sessionExercises.map((exercise, idx) => (
+                          <div key={idx} className={`completed-exercise-item ${exercise.isActive ? 'active-exercise' : ''}`}>
+                            <div className="exercise-header-row">
+                              <span className="exercise-number">
+                                {exercise.isActive ? '▶' : `#${sessionExercises.length - idx}`}
+                              </span>
+                              <span className="exercise-name">{exercise.name}</span>
+                              <span className="exercise-reps">{exercise.reps} reps</span>
                             </div>
-                          ))}
-                        </>
+                            {exercise.feedback && exercise.feedback.length > 0 && (
+                              <div className="exercise-feedback">
+                                <strong>Feedback:</strong>
+                                {exercise.feedback.map((fb, fbIdx) => (
+                                  <div key={fbIdx} className="feedback-text">• {fb}</div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ))
                       )}
                     </>
                   )}
