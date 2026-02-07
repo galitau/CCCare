@@ -59,13 +59,18 @@ class ExerciseState:
 
 class ExerciseDetector:
 	def __init__(self) -> None:
-		self.exercise = "squat"
+		self.exercise: Optional[str] = None
 		self.auto_mode = True
 		self.min_confidence = 0.3
 		self.current_confidence = 1.0
 		self.lock_until = 0.0
 		self.locked_exercise: Optional[str] = None
 		self.allowed_exercises = {"squat", "lateral_lunge"}
+		self.auto_lock_seconds = 3.0
+		self.min_confidence_by_exercise = {
+			"squat": 0.25,
+			"lateral_lunge": 0.2,
+		}
 		self.states: Dict[str, ExerciseState] = {
 			"squat": ExerciseState(),
 			"lateral_lunge": ExerciseState(),
@@ -82,14 +87,23 @@ class ExerciseDetector:
 		if name in self.allowed_exercises:
 			self.exercise = name
 			self.auto_mode = False
+			self.locked_exercise = None
+			self.lock_until = 0.0
 
 	def set_auto(self, enabled: bool) -> None:
 		self.auto_mode = enabled
+		if enabled:
+			self.exercise = None
+			self.locked_exercise = None
+			self.lock_until = 0.0
 
 	def process(self, lm: Dict[str, np.ndarray]) -> Tuple[str, ExerciseState, str]:
-		if self.exercise not in self.allowed_exercises:
-			self.exercise = "squat"
 		if self.auto_mode:
+			f = self._features(lm)
+			ankle_span = float(f["ankle_span"])
+			lateral_shift = float(f["lateral_shift"])
+			if self.locked_exercise == "lateral_lunge" and ankle_span < 0.18 and abs(lateral_shift) < 0.01:
+				self.lock_until = 0.0
 			now = time.time()
 			if now < self.lock_until and self.locked_exercise in self.allowed_exercises:
 				self.exercise = self.locked_exercise
@@ -100,10 +114,14 @@ class ExerciseDetector:
 				self.current_confidence = conf
 				if conf >= self.min_confidence:
 					self.locked_exercise = exercise
-					self.lock_until = now + 10.0
+					self.lock_until = now + self.auto_lock_seconds
 		else:
+			if self.exercise not in self.allowed_exercises:
+				self.exercise = "squat"
 			self.current_confidence = self._confidence(lm, self.exercise)
 
+		if not self.exercise:
+			return "Detecting...", self.states["squat"], f"Conf: {self.current_confidence:.0%}"
 		if self.exercise == "squat":
 			ex_name, ex_state, status_text = self._detect_squat(lm)
 		elif self.exercise == "lateral_lunge":
@@ -147,9 +165,13 @@ class ExerciseDetector:
 		hip_center = midpoint(lm["hip_l"], lm["hip_r"])
 		ankle_mid = midpoint(lm["ankle_l"], lm["ankle_r"])
 		lateral_shift = hip_center[0] - ankle_mid[0]
+		ankle_span = abs(lm["ankle_l"][0] - lm["ankle_r"][0])
+		shoulder_span = abs(lm["shoulder_l"][0] - lm["shoulder_r"][0])
+		hip_span = abs(lm["hip_l"][0] - lm["hip_r"][0])
+		front_facing = shoulder_span > hip_span * 0.9
 		knee_bent = avg_knee < 125
-		lunge_left = knee_l < 115 and knee_r > 155 and lateral_shift < -0.02
-		lunge_right = knee_r < 115 and knee_l > 155 and lateral_shift > 0.02
+		lunge_left = knee_l < 135 and knee_r > 145 and (lateral_shift < -0.01 or ankle_span > 0.25)
+		lunge_right = knee_r < 135 and knee_l > 145 and (lateral_shift > 0.01 or ankle_span > 0.25)
 		elbows_bent = avg_elbow < 110
 		body_straight = avg_body > 165
 		elbows_ok = 70 < elbow_l < 110 and 70 < elbow_r < 110
@@ -165,6 +187,10 @@ class ExerciseDetector:
 			"wrists_above": wrists_above,
 			"wrists_below": wrists_below,
 			"lateral_shift": lateral_shift,
+			"ankle_span": ankle_span,
+			"shoulder_span": shoulder_span,
+			"hip_span": hip_span,
+			"front_facing": front_facing,
 			"knee_bent": knee_bent,
 			"lunge_left": lunge_left,
 			"lunge_right": lunge_right,
@@ -184,6 +210,10 @@ class ExerciseDetector:
 		avg_elbow = float(f["avg_elbow"])
 		avg_body = float(f["avg_body"])
 		lateral_shift = float(f["lateral_shift"])
+		ankle_span = float(f["ankle_span"])
+		shoulder_span = float(f["shoulder_span"])
+		hip_span = float(f["hip_span"])
+		front_facing = bool(f["front_facing"])
 		wrists_above = bool(f["wrists_above"])
 		wrists_below = bool(f["wrists_below"])
 		knee_bent = bool(f["knee_bent"])
@@ -200,19 +230,25 @@ class ExerciseDetector:
 				score += 0.5
 			if abs(knee_l - knee_r) < 20:
 				score += 0.2
-			if abs(lateral_shift) < 0.02:
+			if abs(lateral_shift) < 0.02 and ankle_span < 0.22:
 				score += 0.2
-			if avg_body > 150:
+			if avg_body > 140:
+				score += 0.1
+			if hip_span > 0 and (shoulder_span / hip_span) < 0.75:
 				score += 0.1
 			return self._clamp01(score)
 		if exercise == "lateral_lunge":
 			score = 0.0
 			if lunge_left or lunge_right:
-				score += 0.6
-			if abs(lateral_shift) > 0.03:
+				score += 0.55
+			if abs(lateral_shift) > 0.01:
 				score += 0.2
-			if abs(knee_l - knee_r) > 30:
+			if ankle_span > 0.2:
 				score += 0.2
+			if abs(knee_l - knee_r) > 15:
+				score += 0.05
+			if front_facing:
+				score += 0.1
 			return self._clamp01(score)
 		if exercise == "chest_press":
 			score = 0.0
@@ -301,6 +337,18 @@ class ExerciseDetector:
 
 	def _auto_detect(self, lm: Dict[str, np.ndarray]) -> Tuple[str, float]:
 		f = self._features(lm)
+		ankle_span = float(f["ankle_span"])
+		lateral_shift = float(f["lateral_shift"])
+		front_facing = bool(f["front_facing"])
+		if front_facing and (ankle_span > 0.2 or abs(lateral_shift) > 0.01):
+			lunge_conf = self._confidence_from_features(f, "lateral_lunge") or 0.0
+			return "lateral_lunge", lunge_conf
+		if not front_facing and ankle_span < 0.2 and abs(lateral_shift) < 0.01:
+			squat_conf = self._confidence_from_features(f, "squat") or 0.0
+			return "squat", squat_conf
+		if front_facing and ankle_span < 0.18 and abs(lateral_shift) < 0.01:
+			squat_conf = self._confidence_from_features(f, "squat") or 0.0
+			return "squat", squat_conf
 		squat_conf = self._confidence_from_features(f, "squat") or 0.0
 		lunge_conf = self._confidence_from_features(f, "lateral_lunge") or 0.0
 		if lunge_conf > squat_conf:
@@ -308,7 +356,8 @@ class ExerciseDetector:
 		return "squat", squat_conf
 
 	def _can_count(self) -> bool:
-		return self.current_confidence >= self.min_confidence
+		min_conf = self.min_confidence_by_exercise.get(self.exercise or "", self.min_confidence)
+		return self.current_confidence >= min_conf
 
 	def _transition(self, state: ExerciseState, new_state: str, now: float) -> None:
 		if state.state != new_state:
@@ -349,14 +398,15 @@ class ExerciseDetector:
 
 	def _detect_lateral_lunge(self, lm: Dict[str, np.ndarray]) -> Tuple[str, ExerciseState, str]:
 		st = self.states["lateral_lunge"]
-		knee_l = angle_3pt(lm["hip_l"], lm["knee_l"], lm["ankle_l"])
-		knee_r = angle_3pt(lm["hip_r"], lm["knee_r"], lm["ankle_r"])
+		knee_l = angle_3pt_2d(lm["hip_l"], lm["knee_l"], lm["ankle_l"])
+		knee_r = angle_3pt_2d(lm["hip_r"], lm["knee_r"], lm["ankle_r"])
 		hip_center = midpoint(lm["hip_l"], lm["hip_r"])
 		ankle_mid = midpoint(lm["ankle_l"], lm["ankle_r"])
 		lateral_shift = hip_center[0] - ankle_mid[0]
 		now = time.time()
-		down_left = knee_l < 105 and knee_r > 150 and lateral_shift < -0.03
-		down_right = knee_r < 105 and knee_l > 150 and lateral_shift > 0.03
+		ankle_span = abs(lm["ankle_l"][0] - lm["ankle_r"][0])
+		down_left = knee_l < 135 and knee_r > 145 and (lateral_shift < -0.01 or ankle_span > 0.25)
+		down_right = knee_r < 135 and knee_l > 145 and (lateral_shift > 0.01 or ankle_span > 0.25)
 		if down_left or down_right:
 			self._transition(st, "down", now)
 		if knee_l > 160 and knee_r > 160 and st.state == "down":
