@@ -60,6 +60,12 @@ class ExerciseState:
 class ExerciseDetector:
 	def __init__(self) -> None:
 		self.exercise = "squat"
+		self.auto_mode = True
+		self.min_confidence = 0.3
+		self.current_confidence = 1.0
+		self.lock_until = 0.0
+		self.locked_exercise: Optional[str] = None
+		self.allowed_exercises = {"squat", "lateral_lunge"}
 		self.states: Dict[str, ExerciseState] = {
 			"squat": ExerciseState(),
 			"lateral_lunge": ExerciseState(),
@@ -73,29 +79,236 @@ class ExerciseDetector:
 		}
 
 	def set_exercise(self, name: str) -> None:
-		if name in self.states:
+		if name in self.allowed_exercises:
 			self.exercise = name
+			self.auto_mode = False
+
+	def set_auto(self, enabled: bool) -> None:
+		self.auto_mode = enabled
 
 	def process(self, lm: Dict[str, np.ndarray]) -> Tuple[str, ExerciseState, str]:
+		if self.exercise not in self.allowed_exercises:
+			self.exercise = "squat"
+		if self.auto_mode:
+			now = time.time()
+			if now < self.lock_until and self.locked_exercise in self.allowed_exercises:
+				self.exercise = self.locked_exercise
+				self.current_confidence = self._confidence(lm, self.exercise)
+			else:
+				exercise, conf = self._auto_detect(lm)
+				self.exercise = exercise
+				self.current_confidence = conf
+				if conf >= self.min_confidence:
+					self.locked_exercise = exercise
+					self.lock_until = now + 10.0
+		else:
+			self.current_confidence = self._confidence(lm, self.exercise)
+
 		if self.exercise == "squat":
-			return self._detect_squat(lm)
-		if self.exercise == "lateral_lunge":
-			return self._detect_lateral_lunge(lm)
-		if self.exercise == "chest_press":
-			return self._detect_chest_press(lm)
-		if self.exercise == "vertical_traction":
-			return self._detect_vertical_traction(lm)
-		if self.exercise == "hip_raise":
-			return self._detect_hip_raise(lm)
-		if self.exercise == "airplane":
-			return self._detect_airplane(lm)
-		if self.exercise == "front_bridge":
-			return self._detect_front_bridge(lm)
-		if self.exercise == "alternate_leg_lowers":
-			return self._detect_alternate_leg_lowers(lm)
-		if self.exercise == "thoracic_rotation":
-			return self._detect_thoracic_rotation(lm)
-		return self.exercise, self.states[self.exercise], ""
+			ex_name, ex_state, status_text = self._detect_squat(lm)
+		elif self.exercise == "lateral_lunge":
+			ex_name, ex_state, status_text = self._detect_lateral_lunge(lm)
+		elif self.exercise == "chest_press":
+			ex_name, ex_state, status_text = self._detect_chest_press(lm)
+		elif self.exercise == "vertical_traction":
+			ex_name, ex_state, status_text = self._detect_vertical_traction(lm)
+		elif self.exercise == "hip_raise":
+			ex_name, ex_state, status_text = self._detect_hip_raise(lm)
+		elif self.exercise == "airplane":
+			ex_name, ex_state, status_text = self._detect_airplane(lm)
+		elif self.exercise == "front_bridge":
+			ex_name, ex_state, status_text = self._detect_front_bridge(lm)
+		elif self.exercise == "alternate_leg_lowers":
+			ex_name, ex_state, status_text = self._detect_alternate_leg_lowers(lm)
+		elif self.exercise == "thoracic_rotation":
+			ex_name, ex_state, status_text = self._detect_thoracic_rotation(lm)
+		else:
+			ex_name, ex_state, status_text = self.exercise, self.states[self.exercise], ""
+
+		conf_text = f"Conf: {self.current_confidence:.0%}"
+		if status_text:
+			status_text = f"{status_text} | {conf_text}"
+		else:
+			status_text = conf_text
+		return ex_name, ex_state, status_text
+
+	def _features(self, lm: Dict[str, np.ndarray]) -> Dict[str, float | bool]:
+		knee_l = angle_3pt_2d(lm["hip_l"], lm["knee_l"], lm["ankle_l"])
+		knee_r = angle_3pt_2d(lm["hip_r"], lm["knee_r"], lm["ankle_r"])
+		elbow_l = angle_3pt_2d(lm["shoulder_l"], lm["elbow_l"], lm["wrist_l"])
+		elbow_r = angle_3pt_2d(lm["shoulder_r"], lm["elbow_r"], lm["wrist_r"])
+		body_l = angle_3pt_2d(lm["shoulder_l"], lm["hip_l"], lm["ankle_l"])
+		body_r = angle_3pt_2d(lm["shoulder_r"], lm["hip_r"], lm["ankle_r"])
+		avg_knee = (knee_l + knee_r) / 2.0
+		avg_elbow = (elbow_l + elbow_r) / 2.0
+		avg_body = (body_l + body_r) / 2.0
+		wrists_above = (lm["wrist_l"][1] < lm["shoulder_l"][1] and lm["wrist_r"][1] < lm["shoulder_r"][1])
+		wrists_below = (lm["wrist_l"][1] > lm["shoulder_l"][1] and lm["wrist_r"][1] > lm["shoulder_r"][1])
+		hip_center = midpoint(lm["hip_l"], lm["hip_r"])
+		ankle_mid = midpoint(lm["ankle_l"], lm["ankle_r"])
+		lateral_shift = hip_center[0] - ankle_mid[0]
+		knee_bent = avg_knee < 125
+		lunge_left = knee_l < 115 and knee_r > 155 and lateral_shift < -0.02
+		lunge_right = knee_r < 115 and knee_l > 155 and lateral_shift > 0.02
+		elbows_bent = avg_elbow < 110
+		body_straight = avg_body > 165
+		elbows_ok = 70 < elbow_l < 110 and 70 < elbow_r < 110
+		arms_out = elbow_l > 160 and elbow_r > 160
+		return {
+			"knee_l": knee_l,
+			"knee_r": knee_r,
+			"avg_knee": avg_knee,
+			"elbow_l": elbow_l,
+			"elbow_r": elbow_r,
+			"avg_elbow": avg_elbow,
+			"avg_body": avg_body,
+			"wrists_above": wrists_above,
+			"wrists_below": wrists_below,
+			"lateral_shift": lateral_shift,
+			"knee_bent": knee_bent,
+			"lunge_left": lunge_left,
+			"lunge_right": lunge_right,
+			"elbows_bent": elbows_bent,
+			"body_straight": body_straight,
+			"elbows_ok": elbows_ok,
+			"arms_out": arms_out,
+		}
+
+	def _clamp01(self, value: float) -> float:
+		return max(0.0, min(1.0, value))
+
+	def _confidence_from_features(self, f: Dict[str, float | bool], exercise: str) -> Optional[float]:
+		knee_l = float(f["knee_l"])
+		knee_r = float(f["knee_r"])
+		avg_knee = float(f["avg_knee"])
+		avg_elbow = float(f["avg_elbow"])
+		avg_body = float(f["avg_body"])
+		lateral_shift = float(f["lateral_shift"])
+		wrists_above = bool(f["wrists_above"])
+		wrists_below = bool(f["wrists_below"])
+		knee_bent = bool(f["knee_bent"])
+		lunge_left = bool(f["lunge_left"])
+		lunge_right = bool(f["lunge_right"])
+		elbows_bent = bool(f["elbows_bent"])
+		body_straight = bool(f["body_straight"])
+		elbows_ok = bool(f["elbows_ok"])
+		arms_out = bool(f["arms_out"])
+
+		if exercise == "squat":
+			score = 0.0
+			if avg_knee < 140:
+				score += 0.5
+			if abs(knee_l - knee_r) < 20:
+				score += 0.2
+			if abs(lateral_shift) < 0.02:
+				score += 0.2
+			if avg_body > 150:
+				score += 0.1
+			return self._clamp01(score)
+		if exercise == "lateral_lunge":
+			score = 0.0
+			if lunge_left or lunge_right:
+				score += 0.6
+			if abs(lateral_shift) > 0.03:
+				score += 0.2
+			if abs(knee_l - knee_r) > 30:
+				score += 0.2
+			return self._clamp01(score)
+		if exercise == "chest_press":
+			score = 0.0
+			if wrists_below:
+				score += 0.3
+			if elbows_bent:
+				score += 0.4
+			if avg_elbow < 100:
+				score += 0.2
+			if avg_body > 150:
+				score += 0.1
+			return self._clamp01(score)
+		if exercise == "vertical_traction":
+			score = 0.0
+			if wrists_above:
+				score += 0.4
+			if avg_elbow > 150:
+				score += 0.4
+			if avg_elbow > 165:
+				score += 0.2
+			return self._clamp01(score)
+		if exercise == "front_bridge":
+			score = 0.0
+			if body_straight:
+				score += 0.5
+			if elbows_ok:
+				score += 0.4
+			if avg_body > 170:
+				score += 0.1
+			return self._clamp01(score)
+		if exercise == "airplane":
+			score = 0.0
+			if arms_out:
+				score += 0.4
+			if avg_body < 150:
+				score += 0.4
+			if avg_body < 140:
+				score += 0.2
+			return self._clamp01(score)
+		if exercise == "alternate_leg_lowers":
+			score = 0.0
+			if (knee_l > 160 and knee_r < 120) or (knee_r > 160 and knee_l < 120):
+				score += 0.8
+			if abs(knee_l - knee_r) > 40:
+				score += 0.2
+			return self._clamp01(score)
+		if exercise == "thoracic_rotation":
+			return None
+		if exercise == "hip_raise":
+			return None
+		return None
+
+	def _confidence(self, lm: Dict[str, np.ndarray], exercise: str) -> float:
+		f = self._features(lm)
+		from_features = self._confidence_from_features(f, exercise)
+		if from_features is not None:
+			return from_features
+
+		if exercise == "hip_raise":
+			hip_angle_l = angle_3pt_2d(lm["shoulder_l"], lm["hip_l"], lm["knee_l"])
+			hip_angle_r = angle_3pt_2d(lm["shoulder_r"], lm["hip_r"], lm["knee_r"])
+			avg_hip = (hip_angle_l + hip_angle_r) / 2.0
+			hip_y = (lm["hip_l"][1] + lm["hip_r"][1]) / 2.0
+			knee_y = (lm["knee_l"][1] + lm["knee_r"][1]) / 2.0
+			score = 0.0
+			if avg_hip < 140 or hip_y > knee_y:
+				score += 0.3
+			if avg_hip > 160 and hip_y < knee_y:
+				score += 0.5
+			if abs(hip_y - knee_y) > 0.02:
+				score += 0.2
+			return self._clamp01(score)
+
+		if exercise == "thoracic_rotation":
+			shoulder_z_diff = lm["shoulder_l"][2] - lm["shoulder_r"][2]
+			score = 0.0
+			if abs(shoulder_z_diff) > 0.10:
+				score += 0.6
+			if abs(shoulder_z_diff) > 0.15:
+				score += 0.2
+			if abs(shoulder_z_diff) > 0.20:
+				score += 0.2
+			return self._clamp01(score)
+
+		return 1.0
+
+	def _auto_detect(self, lm: Dict[str, np.ndarray]) -> Tuple[str, float]:
+		f = self._features(lm)
+		squat_conf = self._confidence_from_features(f, "squat") or 0.0
+		lunge_conf = self._confidence_from_features(f, "lateral_lunge") or 0.0
+		if lunge_conf > squat_conf:
+			return "lateral_lunge", lunge_conf
+		return "squat", squat_conf
+
+	def _can_count(self) -> bool:
+		return self.current_confidence >= self.min_confidence
 
 	def _transition(self, state: ExerciseState, new_state: str, now: float) -> None:
 		if state.state != new_state:
@@ -128,7 +341,8 @@ class ExerciseDetector:
 		if st.stable_down_frames >= 3:
 			self._transition(st, "down", now)
 		if st.stable_up_frames >= 3 and st.state == "down":
-			st.reps += 1
+			if self._can_count():
+				st.reps += 1
 			self._transition(st, "up", now)
 
 		return "Squats", st, f"Knee: {st.ema_knee:.0f}°"
@@ -146,7 +360,8 @@ class ExerciseDetector:
 		if down_left or down_right:
 			self._transition(st, "down", now)
 		if knee_l > 160 and knee_r > 160 and st.state == "down":
-			st.reps += 1
+			if self._can_count():
+				st.reps += 1
 			self._transition(st, "up", now)
 		side = "L" if down_left else "R" if down_right else ""
 		return "Dynamic Hip Mobility Lateral Lunge", st, f"Side: {side}"
@@ -160,7 +375,8 @@ class ExerciseDetector:
 		if avg_elbow < 95:
 			self._transition(st, "down", now)
 		if avg_elbow > 160 and st.state == "down":
-			st.reps += 1
+			if self._can_count():
+				st.reps += 1
 			self._transition(st, "up", now)
 		return "Chest Press", st, f"Elbow: {avg_elbow:.0f}°"
 
@@ -175,7 +391,8 @@ class ExerciseDetector:
 		if avg_elbow < 100 and wrists_below:
 			self._transition(st, "down", now)
 		if avg_elbow > 160 and wrists_above and st.state == "down":
-			st.reps += 1
+			if self._can_count():
+				st.reps += 1
 			self._transition(st, "up", now)
 		return "Vertical Traction", st, f"Elbow: {avg_elbow:.0f}°"
 
@@ -190,7 +407,8 @@ class ExerciseDetector:
 		if avg_hip < 130 or hip_y > knee_y:
 			self._transition(st, "down", now)
 		if avg_hip > 160 and hip_y < knee_y and st.state == "down":
-			st.reps += 1
+			if self._can_count():
+				st.reps += 1
 			self._transition(st, "up", now)
 		return "Bent Knee Hip Raise", st, f"Hip: {avg_hip:.0f}°"
 
@@ -211,7 +429,8 @@ class ExerciseDetector:
 			st.state = "hold"
 		else:
 			if st.hold_start is not None and st.hold_seconds > 1.0:
-				st.reps += 1
+				if self._can_count():
+					st.reps += 1
 			st.hold_start = None
 			st.hold_seconds = 0.0
 			st.state = "rest"
@@ -234,7 +453,8 @@ class ExerciseDetector:
 			st.state = "hold"
 		else:
 			if st.hold_start is not None and st.hold_seconds > 1.0:
-				st.reps += 1
+				if self._can_count():
+					st.reps += 1
 			st.hold_start = None
 			st.hold_seconds = 0.0
 			st.state = "rest"
@@ -250,7 +470,8 @@ class ExerciseDetector:
 		elif knee_r > 160 and knee_l < 120:
 			side = "R"
 		if side and side != st.last_side:
-			st.reps += 1
+			if self._can_count():
+				st.reps += 1
 			st.last_side = side
 		return "Bent Knee Alternate Leg Lowers", st, f"Side: {side or ''}"
 
@@ -260,11 +481,13 @@ class ExerciseDetector:
 		now = time.time()
 		if shoulder_z_diff > 0.12 and st.state != "left":
 			st.state = "left"
-			st.reps += 1
+			if self._can_count():
+				st.reps += 1
 			st.last_transition_time = now
 		elif shoulder_z_diff < -0.12 and st.state != "right":
 			st.state = "right"
-			st.reps += 1
+			if self._can_count():
+				st.reps += 1
 			st.last_transition_time = now
 		return "Thoracic Rotation", st, f"Δz: {shoulder_z_diff:.2f}"
 
@@ -342,31 +565,19 @@ def main() -> None:
 				else:
 					draw_text(image, "No pose detected", (20, 30), (0, 0, 255))
 
-				draw_text(image, "Keys: 1 Squat | 2 Lunge | 3 Chest Press | 4 Traction | 5 Hip Raise", (20, h - 50))
-				draw_text(image, "6 Airplane | 7 Front Bridge | 8 Alt Leg Lowers | 9 Thoracic Rotation | Q Quit", (20, h - 20))
+				draw_text(image, "Keys: A Auto | 1 Squat | 2 Lunge | Q Quit", (20, h - 20))
 
 				cv2.imshow("CareSystem AI - CV", image)
 				key = cv2.waitKey(1) & 0xFF
 				if key == ord("q"):
 					break
+				if key == ord("a"):
+					detector.set_auto(True)
 				if key == ord("1"):
 					detector.set_exercise("squat")
 				if key == ord("2"):
 					detector.set_exercise("lateral_lunge")
-				if key == ord("3"):
-					detector.set_exercise("chest_press")
-				if key == ord("4"):
-					detector.set_exercise("vertical_traction")
-				if key == ord("5"):
-					detector.set_exercise("hip_raise")
-				if key == ord("6"):
-					detector.set_exercise("airplane")
-				if key == ord("7"):
-					detector.set_exercise("front_bridge")
-				if key == ord("8"):
-					detector.set_exercise("alternate_leg_lowers")
-				if key == ord("9"):
-					detector.set_exercise("thoracic_rotation")
+				
 	else:
 		from mediapipe.tasks import python
 		from mediapipe.tasks.python import vision
@@ -425,31 +636,19 @@ def main() -> None:
 				else:
 					draw_text(image, "No pose detected", (20, 30), (0, 0, 255))
 
-				draw_text(image, "Keys: 1 Squat | 2 Lunge | 3 Chest Press | 4 Traction | 5 Hip Raise", (20, h - 50))
-				draw_text(image, "6 Airplane | 7 Front Bridge | 8 Alt Leg Lowers | 9 Thoracic Rotation | Q Quit", (20, h - 20))
+				draw_text(image, "Keys: A Auto | 1 Squat | 2 Lunge | Q Quit", (20, h - 20))
 
 				cv2.imshow("CareSystem AI - CV", image)
 				key = cv2.waitKey(1) & 0xFF
 				if key == ord("q"):
 					break
+				if key == ord("a"):
+					detector.set_auto(True)
 				if key == ord("1"):
 					detector.set_exercise("squat")
 				if key == ord("2"):
 					detector.set_exercise("lateral_lunge")
-				if key == ord("3"):
-					detector.set_exercise("chest_press")
-				if key == ord("4"):
-					detector.set_exercise("vertical_traction")
-				if key == ord("5"):
-					detector.set_exercise("hip_raise")
-				if key == ord("6"):
-					detector.set_exercise("airplane")
-				if key == ord("7"):
-					detector.set_exercise("front_bridge")
-				if key == ord("8"):
-					detector.set_exercise("alternate_leg_lowers")
-				if key == ord("9"):
-					detector.set_exercise("thoracic_rotation")
+			
 
 	cap.release()
 	cv2.destroyAllWindows()
