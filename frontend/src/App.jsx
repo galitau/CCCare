@@ -10,12 +10,16 @@ export default function App() {
   const [breathing, setBreathing] = useState('--');
   const [oxygen, setOxygen] = useState('--');
   const [showHeartRateAlert, setShowHeartRateAlert] = useState(false);
-  const [repCount, setRepCount] = useState(0);
-  const [currentAngle, setCurrentAngle] = useState('0°');
-  const [postureStatus, setPostureStatus] = useState({ good: true, text: '✅ Good Form' });
-  const [exerciseQuality, setExerciseQuality] = useState('92%');
-  const [currentExercise, setCurrentExercise] = useState('Arm Raises');
+  
+  // Current exercise state
+  const [currentExercise, setCurrentExercise] = useState('--');
+  const [currentReps, setCurrentReps] = useState(0);
+  const [currentFeedback, setCurrentFeedback] = useState([]);
+  
+  // Session history (exercises completed this session)
+  const [sessionExercises, setSessionExercises] = useState([]);
   const [sessionNumber, setSessionNumber] = useState(1);
+  
   const [patients, setPatients] = useState([
     {
       id: 1,
@@ -153,37 +157,93 @@ export default function App() {
     }
   };
 
+  const generateFeedback = (angle) => {
+    const feedback = [];
+    if (angle < 60) {
+      feedback.push("⚠️ Increase range of motion - raise arm higher");
+    }
+    if (angle > 120) {
+      feedback.push("⚠️ Don't overextend - reduce range slightly");
+    }
+    if (angle >= 60 && angle <= 120) {
+      feedback.push("✅ Excellent form - maintain this position");
+    }
+    
+    // Random additional feedback
+    if (Math.random() > 0.7) {
+      const additionalFeedback = [
+        "Keep your core engaged",
+        "Breathe steadily throughout the movement",
+        "Maintain good posture - shoulders back",
+        "Control the movement - don't rush"
+      ];
+      feedback.push(additionalFeedback[Math.floor(Math.random() * additionalFeedback.length)]);
+    }
+    
+    return feedback;
+  };
+
   const startExerciseTracking = () => {
-    let repCount = 0;
-    const exercises = ['Arm Raises', 'Leg Lifts', 'Squats', 'Side Bends', 'Knee Raises'];
+    const exercises = [
+      'Arm Raises',
+      'Leg Lifts', 
+      'Squats',
+      'Side Bends',
+      'Knee Raises',
+      'Shoulder Rotations',
+      'Ankle Circles'
+    ];
+    
     let currentExerciseIndex = 0;
+    let currentRepCount = 0;
+    let exerciseStartTime = Date.now();
     
     // Set initial exercise
     setCurrentExercise(exercises[0]);
+    setCurrentReps(0);
+    setCurrentFeedback([]);
     
     exerciseIntervalRef.current = setInterval(() => {
       if (!sessionActive) return;
 
-      if (Math.random() > 0.7) {
-        repCount++;
-        setRepCount(repCount);
+      // Simulate rep counting (in real implementation, this comes from webcam AI)
+      if (Math.random() > 0.6) {
+        currentRepCount++;
+        setCurrentReps(currentRepCount);
         
-        // Change exercise every 10 reps
-        if (repCount % 10 === 0 && repCount > 0) {
+        // Generate feedback based on simulated angle
+        const angle = Math.floor(Math.random() * 180);
+        const feedback = generateFeedback(angle);
+        setCurrentFeedback(feedback);
+        
+        // After 8-12 reps, move to next exercise
+        const targetReps = 8 + Math.floor(Math.random() * 5); // 8-12 reps
+        if (currentRepCount >= targetReps) {
+          // Save completed exercise to session history
+          const completedExercise = {
+            name: exercises[currentExerciseIndex],
+            reps: currentRepCount,
+            feedback: feedback,
+            duration: Math.round((Date.now() - exerciseStartTime) / 1000),
+            completedAt: new Date()
+          };
+          
+          setSessionExercises(prev => [...prev, completedExercise]);
+          
+          // Move to next exercise
           currentExerciseIndex = (currentExerciseIndex + 1) % exercises.length;
+          currentRepCount = 0;
+          exerciseStartTime = Date.now();
+          
           setCurrentExercise(exercises[currentExerciseIndex]);
+          setCurrentReps(0);
+          setCurrentFeedback(["Starting new exercise..."]);
         }
-      }
-
-      const angle = Math.floor(Math.random() * 180);
-      setCurrentAngle(angle + '°');
-
-      if (angle >= 60 && angle <= 120) {
-        setPostureStatus({ good: true, text: '✅ Good Form' });
-        setExerciseQuality('92%');
       } else {
-        setPostureStatus({ good: false, text: '⚠️ Adjust Posture' });
-        setExerciseQuality('65%');
+        // Update feedback even when not counting reps
+        const angle = Math.floor(Math.random() * 180);
+        const feedback = generateFeedback(angle);
+        setCurrentFeedback(feedback);
       }
     }, 2000);
   };
@@ -193,9 +253,6 @@ export default function App() {
       clearInterval(exerciseIntervalRef.current);
       exerciseIntervalRef.current = null;
     }
-    setRepCount(0);
-    setCurrentAngle('0°');
-    setCurrentExercise('Arm Raises');
   };
 
   const startWebcam = async () => {
@@ -221,6 +278,11 @@ export default function App() {
 
   const startSession = () => {
     setSessionActive(true);
+    setSessionExercises([]);
+    setCurrentExercise('--');
+    setCurrentReps(0);
+    setCurrentFeedback([]);
+    
     if (selectedPatient) {
       startVitalsMonitoring();
       startExerciseTracking();
@@ -240,13 +302,18 @@ export default function App() {
     setShowHeartRateAlert(false);
 
     if (selectedPatient) {
+      // Create summary of exercises completed
+      const exerciseSummary = sessionExercises
+        .map(ex => `${ex.name} (${ex.reps} reps)`)
+        .join(', ');
+      
       const newSession = {
         date: new Date(),
         duration: "30 minutes",
         avgHeartRate: 78,
         maxHeartRate: 95,
         avgOxygen: 97,
-        exerciseCompleted: "Arm raises, Leg lifts",
+        exerciseCompleted: exerciseSummary || "Session incomplete",
         trainingEffect: 3.2,
         notes: "Good session, maintained proper form"
       };
@@ -264,6 +331,12 @@ export default function App() {
       
       // Increment session number for next session
       setSessionNumber(prev => prev + 1);
+      
+      // Reset current exercise state
+      setCurrentExercise('--');
+      setCurrentReps(0);
+      setCurrentFeedback([]);
+      setSessionExercises([]);
     }
   };
 
@@ -357,7 +430,7 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Vitals Grid - Now with 4 cards */}
+                {/* Vitals - 3 cards only */}
                 <div className="vitals-grid">
                   <div className="vital-card heart-rate">
                     <div className="vital-label">❤️ Heart Rate</div>
@@ -387,24 +460,69 @@ export default function App() {
                       <span className="vital-unit">%</span>
                     </div>
                   </div>
+                </div>
 
-                  <div className="vital-card current-exercise">
-                    <div className="vital-label">🏋️ Current Session</div>
-                    <div className="vital-value">
-                      <span>#{sessionNumber}</span>
-                    </div>
-                    {sessionActive ? (
-                      <div className="exercise-info">
-                        <div className="exercise-name">{currentExercise}</div>
-                        <div className="exercise-reps">{repCount} reps completed</div>
+                {/* Current Session Section */}
+                <div className="medical-section">
+                  <h3>🏋️ Current Session #{sessionNumber}</h3>
+                  
+                  {!sessionActive ? (
+                    <p style={{textAlign: 'center', color: '#718096', padding: '2rem'}}>
+                      No active session. Click "Start Session" to begin.
+                    </p>
+                  ) : (
+                    <>
+                      {/* Current Exercise in Progress */}
+                      <div className="current-exercise-box">
+                        <div className="current-exercise-header">
+                          <span className="exercise-badge">In Progress</span>
+                          <span className="exercise-name-large">{currentExercise}</span>
+                        </div>
+                        <div className="current-exercise-stats">
+                          <div className="stat-item">
+                            <span className="stat-label">Reps Completed:</span>
+                            <span className="stat-value">{currentReps}</span>
+                          </div>
+                        </div>
+                        {currentFeedback.length > 0 && (
+                          <div className="feedback-section">
+                            <div className="feedback-label">Real-time Feedback:</div>
+                            {currentFeedback.map((feedback, idx) => (
+                              <div key={idx} className="feedback-item">
+                                {feedback}
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
-                    ) : (
-                      <div className="exercise-info">
-                        <div className="exercise-name">Not Started</div>
-                        <div className="exercise-reps">-- reps</div>
-                      </div>
-                    )}
-                  </div>
+
+                      {/* Completed Exercises This Session */}
+                      {sessionExercises.length > 0 && (
+                        <>
+                          <div className="section-divider">
+                            <h4>Completed This Session</h4>
+                          </div>
+                          {sessionExercises.map((exercise, idx) => (
+                            <div key={idx} className="completed-exercise-item">
+                              <div className="exercise-header-row">
+                                <span className="exercise-number">#{idx + 1}</span>
+                                <span className="exercise-name">{exercise.name}</span>
+                                <span className="exercise-reps">{exercise.reps} reps</span>
+                              </div>
+                              {exercise.feedback && exercise.feedback.length > 0 && (
+                                <div className="exercise-feedback">
+                                  <strong>Feedback:</strong>
+                                  {exercise.feedback.map((fb, fbIdx) => (
+                                    <div key={fbIdx} className="feedback-text">• {fb}</div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </>
+                      )}
+                    </>
+                  )}
                 </div>
 
                 {/* Medical Records */}
@@ -461,48 +579,6 @@ export default function App() {
                   )}
                 </div>
               </div>
-
-              {sessionActive && (
-                <div className="card">
-                  <h2>📹 AI Exercise Monitoring</h2>
-                  
-                  <div className="webcam-container">
-                    <video
-                      ref={videoRef}
-                      autoPlay
-                      playsInline
-                      style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                    />
-                    <div className="webcam-placeholder" style={{display: 'none'}}>
-                      📹 Camera activated
-                    </div>
-                    <div className="webcam-overlay">
-                      <div className="recording-indicator"></div>
-                      Live Monitoring
-                    </div>
-                  </div>
-
-                  <div className="exercise-metrics">
-                    <div className="metric-box">
-                      <div className="metric-label">Rep Count</div>
-                      <div className="metric-value">{repCount}</div>
-                    </div>
-
-                    <div className="metric-box">
-                      <div className="metric-label">Current Angle</div>
-                      <div className="metric-value">{currentAngle}</div>
-                      <div className={`posture-status ${postureStatus.good ? 'posture-good' : 'posture-adjust'}`}>
-                        {postureStatus.text}
-                      </div>
-                    </div>
-
-                    <div className="metric-box">
-                      <div className="metric-label">Exercise Quality</div>
-                      <div className="metric-value">{exerciseQuality}</div>
-                    </div>
-                  </div>
-                </div>
-              )}
             </>
           )}
         </div>
