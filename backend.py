@@ -538,8 +538,6 @@ class ExerciseDetector:
 		if not down_left and not down_right:
 			if ankle_span < 0.22:
 				feedback = "Step wider"
-			elif abs(lateral_shift) < 0.01:
-				feedback = "Shift your hips sideways"
 		elif down_left and knee_r < 150:
 			feedback = "Straighten the right leg"
 		elif down_right and knee_l < 150:
