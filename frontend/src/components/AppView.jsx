@@ -21,7 +21,8 @@ export default function AppView(props) {
     selectPatient,
     filteredPatients,
     alerts,
-    removeAlert
+    removeAlert,
+    updateRPE
   } = props;
 
   return (
@@ -230,6 +231,20 @@ export default function AppView(props) {
                         </div>
                         <div><strong>Exercises:</strong> {session.exerciseCompleted}</div>
                         <div className="training-effect">🎯 Training Effect: {session.trainingEffect}/5.0</div>
+                        <div className="rpe-container">
+                          <label htmlFor={`rpe-${idx}`}>💪 RPE:</label>
+                          <input
+                            id={`rpe-${idx}`}
+                            type="number"
+                            min="1"
+                            max="10"
+                            value={session.rpe || ''}
+                            placeholder="--"
+                            onChange={(e) => updateRPE(idx, e.target.value ? parseInt(e.target.value) : null)}
+                            className="rpe-input"
+                          />
+                          {session.rpe !== null && <span className="rpe-value">/10</span>}
+                        </div>
                         {session.notes && (
                           <div style={{marginTop: '0.5rem', fontStyle: 'italic', color: '#4a5568'}}>
                             💬 {session.notes}

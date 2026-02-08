@@ -283,6 +283,27 @@ export default function useAppState() {
     setAlerts(prev => prev.filter(a => a.id !== alertId));
   };
 
+  // Update RPE for a specific session
+  const updateRPE = (sessionIndex, rpeValue) => {
+    if (!selectedPatient) return;
+    
+    const updatedHistory = [...selectedPatient.history];
+    if (updatedHistory[sessionIndex]) {
+      updatedHistory[sessionIndex] = { ...updatedHistory[sessionIndex], rpe: rpeValue };
+    }
+
+    setSelectedPatient(prev => ({
+      ...prev,
+      history: updatedHistory
+    }));
+
+    setPatients(patients.map(p => 
+      p.id === selectedPatient.id 
+        ? { ...p, history: updatedHistory }
+        : p
+    ));
+  };
+
   // Check for abnormal conditions and create alerts
   const checkAndAlertAbnormalities = () => {
     if (!selectedPatient) return;
@@ -525,15 +546,16 @@ export default function useAppState() {
         notes: "Good session, maintained proper form"
       };
 
+      const newSessionWithRPE = { ...newSession, rpe: null };
       setPatients(patients.map(p => 
         p.id === selectedPatient.id 
-          ? { ...p, history: [newSession, ...p.history] }
+          ? { ...p, history: [newSessionWithRPE, ...p.history] }
           : p
       ));
 
       setSelectedPatient(prev => ({
         ...prev,
-        history: [newSession, ...prev.history]
+        history: [newSessionWithRPE, ...prev.history]
       }));
       
       setSessionNumber(prev => prev + 1);
@@ -587,6 +609,7 @@ export default function useAppState() {
     filteredPatients,
     videoRef,
     alerts,
-    removeAlert
+    removeAlert,
+    updateRPE
   };
 }

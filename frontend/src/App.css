@@ -465,6 +465,50 @@ body {
   margin-top: 0.5rem;
 }
 
+.rpe-container {
+  display: block;
+  width: fit-content;
+  padding: 0.25rem 0.75rem;
+  background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+  color: white;
+  border-radius: 20px;
+  font-weight: 600;
+  font-size: 0.9rem;
+  margin-top: 0.5rem;
+  transition: all 0.12s ease;
+}
+
+.rpe-container label {
+  margin-right: 0.5rem;
+  color: white;
+}
+
+.rpe-input {
+  width: 50px;
+  padding: 0.15rem 0.4rem;
+  border: none;
+  background: rgba(255,255,255,0.18);
+  border-radius: 6px;
+  color: white;
+  font-weight: 700;
+  text-align: center;
+}
+
+.rpe-input::placeholder {
+  color: rgba(255,255,255,0.6);
+}
+
+.rpe-input:focus {
+  outline: none;
+  background: rgba(255,255,255,0.26);
+}
+
+.rpe-value {
+  margin-left: 0.5rem;
+  font-weight: 700;
+  color: white;
+}
+
 .welcome-message {
   text-align: center;
   padding: 4rem 2rem;
