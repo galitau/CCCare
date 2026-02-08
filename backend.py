@@ -228,11 +228,12 @@ class ExerciseDetector:
 		self.current_confidence = 1.0
 		self.lock_until = 0.0
 		self.locked_exercise: Optional[str] = None
+		self.allow_count = True
 		self.allowed_exercises = {"squat", "lateral_lunge"}
 		self.auto_lock_seconds = 3.0
 		self.min_confidence_by_exercise = {
-			"squat": 0.25,
-			"lateral_lunge": 0.2,
+			"squat": 0.35,
+			"lateral_lunge": 0.35,
 		}
 		self.states: Dict[str, ExerciseState] = {
 			"squat": ExerciseState(),
@@ -519,13 +520,13 @@ class ExerciseDetector:
 		ankle_span = float(f["ankle_span"])
 		lateral_shift = float(f["lateral_shift"])
 		front_facing = bool(f["front_facing"])
-		if front_facing and (ankle_span > 0.2 or abs(lateral_shift) > 0.01):
+		if front_facing and (ankle_span > 0.24 and abs(lateral_shift) > 0.02):
 			lunge_conf = self._confidence_from_features(f, "lateral_lunge") or 0.0
 			return "lateral_lunge", lunge_conf
 		if not front_facing and ankle_span < 0.2 and abs(lateral_shift) < 0.01:
 			squat_conf = self._confidence_from_features(f, "squat") or 0.0
 			return "squat", squat_conf
-		if front_facing and ankle_span < 0.18 and abs(lateral_shift) < 0.01:
+		if front_facing and ankle_span < 0.2 and abs(lateral_shift) < 0.015:
 			squat_conf = self._confidence_from_features(f, "squat") or 0.0
 			return "squat", squat_conf
 		squat_conf = self._confidence_from_features(f, "squat") or 0.0
@@ -535,6 +536,8 @@ class ExerciseDetector:
 		return "squat", squat_conf
 
 	def _can_count(self) -> bool:
+		if not self.allow_count:
+			return False
 		min_conf = self.min_confidence_by_exercise.get(self.exercise or "", self.min_confidence)
 		return self.current_confidence >= min_conf
 
@@ -578,11 +581,11 @@ class ExerciseDetector:
 
 		feedback = ""
 		if st.state == "down":
-			if st.ema_knee > 120:
+			if st.ema_knee > 130:
 				feedback = "Go lower"
-			elif abs(knee_l - knee_r) > 20:
+			elif abs(knee_l - knee_r) > 30:
 				feedback = "Keep knees even"
-			elif avg_body < 150:
+			elif avg_body < 145:
 				feedback = "Keep your back straighter"
 		status = f"Knee: {st.ema_knee:.0f}°"
 		if feedback:
@@ -609,7 +612,7 @@ class ExerciseDetector:
 		side = "L" if down_left else "R" if down_right else ""
 		feedback = ""
 		if not down_left and not down_right:
-			if ankle_span < 0.22:
+			if ankle_span < 0.2 and abs(lateral_shift) < 0.01:
 				feedback = "Step wider"
 		elif down_left and knee_r < 150:
 			feedback = "Straighten the right leg"
@@ -887,6 +890,7 @@ def main() -> None:
 	last_active_user: Optional[str] = None
 	last_feedback_by_exercise = {key: "" for key in detector.states}
 	last_feedback_time = {key: 0.0 for key in detector.states}
+	feedback_cooldown = 3.0
 	detector.reset_exercises({"squat", "lateral_lunge"})
 	if not USE_TASKS:
 		with mp_pose.Pose(
@@ -921,9 +925,15 @@ def main() -> None:
 						detector.reset_exercises({"squat", "lateral_lunge"})
 						last_total_reps = 0
 					last_active_user = face_id.active_user
+				detector.allow_count = face_id.active_user is not None
+				if face_id.active_user is None:
+					for key in last_feedback_by_exercise:
+						last_feedback_by_exercise[key] = ""
+						last_feedback_time[key] = 0.0
 				if now - last_status_log > 3:
 					print(f"[FaceID] {face_id.get_status()}")
 					last_status_log = now
+				detector.allow_count = face_id.active_user is not None
 
 				image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 				image.flags.writeable = False
@@ -942,13 +952,16 @@ def main() -> None:
 						last_activity_time = now
 						lm = extract_landmarks(results.pose_landmarks.landmark)
 						ex_name, ex_state, status_text = detector.process(lm)
-						if detector.exercise in ("squat", "lateral_lunge"):
+						if detector.exercise in ("squat", "lateral_lunge") and face_id.active_user is not None:
 							parts = [p for p in status_text.split(" | ") if not p.startswith("Conf:")]
 							feedback = parts[1] if len(parts) > 1 else ""
 							if feedback:
-								last_feedback_by_exercise[detector.exercise] = feedback
-								last_feedback_time[detector.exercise] = now
-								speaker.say_feedback(detector.exercise, feedback)
+								prev_feedback = last_feedback_by_exercise[detector.exercise]
+								cooldown_ok = (now - last_feedback_time[detector.exercise]) >= feedback_cooldown
+								if feedback != prev_feedback or cooldown_ok:
+									last_feedback_by_exercise[detector.exercise] = feedback
+									last_feedback_time[detector.exercise] = now
+									speaker.say_feedback(detector.exercise, feedback)
 						full_body_ok = True
 					else:
 						full_body_ok = False
@@ -1043,6 +1056,11 @@ def main() -> None:
 				if now - last_status_log > 3:
 					print(f"[FaceID] {face_id.get_status()}")
 					last_status_log = now
+				detector.allow_count = face_id.active_user is not None
+				if face_id.active_user is None:
+					for key in last_feedback_by_exercise:
+						last_feedback_by_exercise[key] = ""
+						last_feedback_time[key] = 0.0
 
 				rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 				mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
@@ -1059,14 +1077,17 @@ def main() -> None:
 					lm = extract_landmarks(landmarks)
 					ex_name, ex_state, status_text = detector.process(lm)
 					full_body_ok = full_body_visible(landmarks)
-					if detector.exercise in ("squat", "lateral_lunge"):
+					if detector.exercise in ("squat", "lateral_lunge") and face_id.active_user is not None:
 						parts = [p for p in status_text.split(" | ") if not p.startswith("Conf:")]
 						feedback = parts[1] if len(parts) > 1 else ""
 						if feedback:
-							last_feedback_by_exercise[detector.exercise] = feedback
-							last_feedback_time[detector.exercise] = now
-							if full_body_ok:
-								speaker.say_feedback(detector.exercise, feedback)
+							prev_feedback = last_feedback_by_exercise[detector.exercise]
+							cooldown_ok = (now - last_feedback_time[detector.exercise]) >= feedback_cooldown
+							if feedback != prev_feedback or cooldown_ok:
+								last_feedback_by_exercise[detector.exercise] = feedback
+								last_feedback_time[detector.exercise] = now
+								if full_body_ok:
+									speaker.say_feedback(detector.exercise, feedback)
 					total_reps = detector.states["squat"].reps + detector.states["lateral_lunge"].reps
 					if total_reps != last_total_reps:
 						last_total_reps = total_reps
