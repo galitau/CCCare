@@ -5,6 +5,7 @@ import { SerialPort } from "serialport";
 import { ReadlineParser } from "@serialport/parser-readline";
 import { MongoClient } from "mongodb";
 import dotenv from "dotenv";
+import { registerWorkoutLogs } from "./workoutLogs.js";
 
 dotenv.config();
 
@@ -26,12 +27,13 @@ let vitalsCol;
 async function connectMongo() {
   const client = new MongoClient(MONGO_URI);
   await client.connect();
-  const db = client.db(DB_NAME);
-  vitalsCol = db.collection(COLLECTION);
+  const vitalsDb = client.db(DB_NAME);
+  vitalsCol = vitalsDb.collection(COLLECTION);
   console.log("✅ Mongo connected ->", DB_NAME, COLLECTION);
 }
 
 await connectMongo();
+await registerWorkoutLogs(app, MONGO_URI);
 
 // --------------------
 // WebSocket
@@ -52,8 +54,9 @@ function broadcast(data) {
 // --------------------
 // Serial (Auto-Reconnect)
 // --------------------
-const SERIAL_PORT = "COM5";
-const BAUD_RATE = 115200;
+const SERIAL_PORT = process.env.SERIAL_PORT || "COM5";
+const BAUD_RATE = Number(process.env.BAUD_RATE || 115200);
+let serialEnabled = true;
 
 let port;
 let parser;
@@ -69,8 +72,8 @@ function connectSerial() {
 
   port.open((err) => {
     if (err) {
-      console.log("❌ Open error:", err.message);
-      setTimeout(connectSerial, 2000);
+      console.log("⚠️ Serial not available, running without Arduino:", err.message);
+      serialEnabled = false;
       return;
     }
 
@@ -112,6 +115,7 @@ function connectSerial() {
   });
 
   port.on("close", () => {
+    if (!serialEnabled) return;
     console.log("⚠️ Serial port closed — reconnecting...");
     setTimeout(connectSerial, 2000);
   });
@@ -135,3 +139,4 @@ app.get("/api/latest", async (req, res) => {
 
   res.json(latest[0] || null);
 });
+

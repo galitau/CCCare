@@ -69,15 +69,18 @@ def midpoint(a: np.ndarray, b: np.ndarray) -> np.ndarray:
 
 @dataclass
 class ExerciseState:
-	reps: int = 0
-	state: str = "down"
-	last_side: Optional[str] = None
-	last_transition_time: float = field(default_factory=time.time)
-	hold_start: Optional[float] = None
-	hold_seconds: float = 0.0
-	ema_knee: Optional[float] = None
-	stable_down_frames: int = 0
-	stable_up_frames: int = 0
+    reps: int = 0
+    state: str = "down"
+    last_side: Optional[str] = None
+    last_transition_time: float = field(default_factory=time.time)
+    hold_start: Optional[float] = None
+    hold_seconds: float = 0.0
+    ema_knee: Optional[float] = None
+    stable_down_frames: int = 0
+    stable_up_frames: int = 0
+    # --- ADD THESE TWO LINES ---
+    active_feedback: str = ""
+    feedback_start_time: float = 0.0
 
 class FaceIDManager:
 	def __init__(self, db_uri: Optional[str] = None):
@@ -246,6 +249,18 @@ class ExerciseDetector:
 			"alternate_leg_lowers": ExerciseState(),
 			"thoracic_rotation": ExerciseState(),
 		}
+
+	def _update_feedback(self, state: ExerciseState, new_feedback: str) -> None:
+		now = time.time()
+		# If the feedback is the same, just keep it.
+		if new_feedback == state.active_feedback:
+			return
+
+		# If we are clearing feedback, or changing it, make sure the old one
+		# stayed on screen for at least 1.5 seconds so it does not flicker.
+		if now - state.feedback_start_time > 1.5:
+			state.active_feedback = new_feedback
+			state.feedback_start_time = now
 
 	def reset_exercises(self, names: Optional[set[str]] = None) -> None:
 		reset_targets = names or set(self.states.keys())
@@ -579,18 +594,26 @@ class ExerciseDetector:
 				st.reps += 1
 			self._transition(st, "up", now)
 
-		feedback = ""
+		current_msg = "" 
 		if st.state == "down":
-			if st.ema_knee > 130:
-				feedback = "Go lower"
-			elif abs(knee_l - knee_r) > 30:
-				feedback = "Keep knees even"
-			elif avg_body < 145:
-				feedback = "Keep your back straighter"
+			# Check for errors only when they've reached the bottom area
+			if st.stable_down_frames > 2 and st.ema_knee > 125:
+				current_msg = "Go lower"
+			elif abs(knee_l - knee_r) > 35:
+				current_msg = "Keep knees even"
+			elif avg_body < 140:
+				current_msg = "Chest up, back straight"
+		
+		# We use the smoothing function instead of just saying feedback = current_msg
+		# This makes the message "stick" on screen for a minimum time
+		self._update_feedback(st, current_msg)
+
 		status = f"Knee: {st.ema_knee:.0f}°"
-		if feedback:
-			status = f"{status} | {feedback}"
+		if st.active_feedback:
+			status = f"{status} | {st.active_feedback}"
+			
 		return "Squats", st, status
+		
 
 	def _detect_lateral_lunge(self, lm: Dict[str, np.ndarray]) -> Tuple[str, ExerciseState, str]:
 		st = self.states["lateral_lunge"]
@@ -611,13 +634,20 @@ class ExerciseDetector:
 			self._transition(st, "up", now)
 		side = "L" if down_left else "R" if down_right else ""
 		feedback = ""
-		if not down_left and not down_right:
-			if ankle_span < 0.2 and abs(lateral_shift) < 0.01:
+		# Only coach them once the system has locked the 'down' state
+		if st.state == "down":
+			if down_left and knee_r < 150:
+				feedback = "Straighten your right leg"
+			elif down_right and knee_l < 150:
+				feedback = "Straighten your left leg"
+		
+		# If they are in the neutral/up position, don't tell them to step wider 
+		# unless they've been standing there too long without triggering a rep.
+		if st.state == "up" and ankle_span < 0.22:
+			# Only show this if they are actually trying to lunge (hip shift)
+			if abs(lateral_shift) > 0.015: 
 				feedback = "Step wider"
-		elif down_left and knee_r < 150:
-			feedback = "Straighten the right leg"
-		elif down_right and knee_l < 150:
-			feedback = "Straighten the left leg"
+
 		status = f"Side: {side}"
 		if feedback:
 			status = f"{status} | {feedback}"
