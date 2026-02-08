@@ -423,7 +423,9 @@ export default function useAppState() {
     if (selectedPatient) {
       startVitalsMonitoring();
       startExerciseTracking();
-      startWebcam();
+      if (import.meta.env.VITE_ENABLE_CAMERA === 'true') {
+        startWebcam();
+      }
     }
   };
 
