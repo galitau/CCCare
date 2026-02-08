@@ -19,6 +19,7 @@ export default function useAppState() {
   const [alerts, setAlerts] = useState([]);
   const prevOxygenRef = useRef({});  // Track previous oxygen by patientId
   const alertTimeoutsRef = useRef({}); // Track alert auto-dismiss timeouts
+  const [hasMongoSession, setHasMongoSession] = useState(false);
 
   const [patients, setPatients] = useState([
     {
@@ -205,6 +206,39 @@ export default function useAppState() {
     setOxygen('--');
   };
 
+  const fetchWorkoutLogs = async (patientName) => {
+    const protocol = window.location.protocol === 'https:' ? 'https' : 'http';
+    const host = window.location.hostname || 'localhost';
+    const url = `${protocol}://${host}:5176/api/workout-logs?patient=${encodeURIComponent(patientName)}`;
+    const res = await fetch(url);
+    if (!res.ok) return [];
+    return res.json().catch(() => []);
+  };
+
+  const mapPatientName = (name) => {
+    if (name === "John Smith") return "Galit_Tauber";
+    return name;
+  };
+
+  const hydrateSessionFromLogs = async (patientName) => {
+    const logs = await fetchWorkoutLogs(patientName);
+    if (!Array.isArray(logs) || logs.length === 0) return false;
+
+    const mapped = logs.map((log) => ({
+      name: log.exercise || "Exercise",
+      reps: Number.isFinite(log.reps) ? log.reps : 0,
+      feedback: [],
+      duration: 0,
+      completedAt: log.date ? new Date(log.date) : new Date(),
+      isActive: false
+    }));
+    setSessionExercises(mapped);
+    setCurrentExercise(mapped[0]?.name || '--');
+    setCurrentReps(mapped[0]?.reps || 0);
+    setHasMongoSession(true);
+    return true;
+  };
+
   const stopVitalsMonitoring = () => {
     if (vitalsIntervalRef.current) {
       clearInterval(vitalsIntervalRef.current);
@@ -284,6 +318,7 @@ export default function useAppState() {
   };
 
   const startExerciseTracking = () => {
+    if (exerciseIntervalRef.current) return;
     const exercises = [
       'Arm Raises',
       'Leg Lifts', 
@@ -413,16 +448,23 @@ export default function useAppState() {
     }
   };
 
-  const startSession = () => {
+  const startSession = async () => {
     setSessionActive(true);
     setSessionExercises([]);
     setCurrentExercise('--');
     setCurrentReps(0);
     setCurrentFeedback([]);
+    setHasMongoSession(false);
     
     if (selectedPatient) {
       startVitalsMonitoring();
-      startExerciseTracking();
+
+      const mappedName = mapPatientName(selectedPatient.name);
+      const loaded = await hydrateSessionFromLogs(mappedName);
+      if (!loaded) {
+        startExerciseTracking();
+      }
+
       if (import.meta.env.VITE_ENABLE_CAMERA === 'true') {
         startWebcam();
       }
@@ -432,7 +474,9 @@ export default function useAppState() {
   const stopSession = () => {
     setSessionActive(false);
     stopVitalsMonitoring();
-    stopExerciseTracking();
+    if (!hasMongoSession) {
+      stopExerciseTracking();
+    }
     stopWebcam();
 
     setHeartRate('--');
@@ -480,6 +524,16 @@ export default function useAppState() {
     const patient = patients.find(p => p.id === patientId);
     setSelectedPatient(patient);
   };
+
+  useEffect(() => {
+    if (!sessionActive || !selectedPatient || hasMongoSession) return;
+    const mappedName = mapPatientName(selectedPatient.name);
+    hydrateSessionFromLogs(mappedName).then((loaded) => {
+      if (!loaded) {
+        startExerciseTracking();
+      }
+    });
+  }, [sessionActive, selectedPatient, hasMongoSession]);
 
   const filteredPatients = patients.filter(p =>
     p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
