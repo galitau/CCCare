@@ -146,7 +146,7 @@ export default function useAppState() {
             const data = JSON.parse(evt.data);
             if (data.hr !== undefined) setHeartRate(data.hr);
             if (data.spo2 !== undefined) setOxygen(data.spo2);
-            if (data.br !== undefined) setBreathing(data.br);
+            if (data.hr !== undefined) setBreathing((0.15*data.hr)-1);
           } catch (e) {
             // ignore non-JSON messages
           }
