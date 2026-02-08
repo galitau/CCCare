@@ -1,12 +1,16 @@
 import time
+import json
+import threading
 from pathlib import Path
-from urllib.request import urlretrieve
+from urllib.request import Request, urlopen, urlretrieve
 from dataclasses import dataclass, field
+from queue import Queue, Empty
 from typing import Dict, Optional, Tuple
 
 import cv2
 import mediapipe as mp
 import numpy as np
+import sounddevice as sd
 
 import os
 from deepface import DeepFace
@@ -146,6 +150,75 @@ class FaceIDManager:
 				{"$set": {"reps": reps, "last_sync": time.time()}},
 				upsert=True
 			)
+
+
+class ElevenLabsSpeaker:
+	def __init__(self) -> None:
+		load_env()
+		self.api_key = os.getenv("ELEVENLABS_API_KEY")
+		self.voice_id = os.getenv("ELEVENLABS_VOICE_ID", "")
+		self.model_id = os.getenv("ELEVENLABS_MODEL_ID", "eleven_multilingual_v2")
+		self.min_gap_seconds = 1.0
+		self.enabled = bool(self.api_key and self.voice_id)
+		self.last_spoken: Dict[str, float] = {}
+		self.queue: Queue[str] = Queue()
+		self.worker = threading.Thread(target=self._run, daemon=True)
+		if self.enabled:
+			self.worker.start()
+		else:
+			print("[ElevenLabs] Disabled (missing ELEVENLABS_API_KEY or ELEVENLABS_VOICE_ID).")
+
+	def say_feedback(self, exercise_key: str, text: str) -> None:
+		if not self.enabled or not text:
+			return
+		now = time.time()
+		last_time = self.last_spoken.get(exercise_key, 0.0)
+		if now - last_time < self.min_gap_seconds:
+			return
+		self.last_spoken[exercise_key] = now
+		self.queue.put(text)
+
+	def _run(self) -> None:
+		while True:
+			try:
+				text = self.queue.get()
+			except Empty:
+				continue
+			try:
+				pcm = self._synthesize_pcm(text)
+				if pcm is None:
+					continue
+				audio = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
+				sd.play(audio, samplerate=16000, blocking=True)
+			except Exception as exc:
+				print(f"[ElevenLabs] TTS error: {exc}")
+
+	def _synthesize_pcm(self, text: str) -> Optional[bytes]:
+		url = (
+			f"https://api.elevenlabs.io/v1/text-to-speech/{self.voice_id}/stream"
+			"?output_format=pcm_16000"
+		)
+		payload = {
+			"text": text,
+			"model_id": self.model_id,
+			"voice_settings": {
+				"stability": 0.4,
+				"similarity_boost": 0.75,
+			},
+		}
+		data = json.dumps(payload).encode("utf-8")
+		req = Request(
+			url,
+			data=data,
+			method="POST",
+			headers={
+				"xi-api-key": self.api_key or "",
+				"Content-Type": "application/json",
+				"Accept": "audio/pcm",
+			},
+		)
+		with urlopen(req, timeout=10) as resp:
+			return resp.read()
 
 class ExerciseDetector:
 	def __init__(self) -> None:
@@ -801,6 +874,7 @@ def main() -> None:
 
 	detector = ExerciseDetector()
 	face_id = FaceIDManager()
+	speaker = ElevenLabsSpeaker()
 	face_id.load_db()
 	last_id_time = 0.0
 	last_sync_time = 0.0
@@ -813,6 +887,7 @@ def main() -> None:
 	last_active_user: Optional[str] = None
 	last_feedback_by_exercise = {key: "" for key in detector.states}
 	last_feedback_time = {key: 0.0 for key in detector.states}
+	detector.reset_exercises({"squat", "lateral_lunge"})
 	if not USE_TASKS:
 		with mp_pose.Pose(
 			model_complexity=1,
@@ -873,6 +948,7 @@ def main() -> None:
 							if feedback:
 								last_feedback_by_exercise[detector.exercise] = feedback
 								last_feedback_time[detector.exercise] = now
+								speaker.say_feedback(detector.exercise, feedback)
 						full_body_ok = True
 					else:
 						full_body_ok = False
@@ -982,12 +1058,15 @@ def main() -> None:
 					last_activity_time = now
 					lm = extract_landmarks(landmarks)
 					ex_name, ex_state, status_text = detector.process(lm)
+					full_body_ok = full_body_visible(landmarks)
 					if detector.exercise in ("squat", "lateral_lunge"):
 						parts = [p for p in status_text.split(" | ") if not p.startswith("Conf:")]
 						feedback = parts[1] if len(parts) > 1 else ""
 						if feedback:
 							last_feedback_by_exercise[detector.exercise] = feedback
 							last_feedback_time[detector.exercise] = now
+							if full_body_ok:
+								speaker.say_feedback(detector.exercise, feedback)
 					total_reps = detector.states["squat"].reps + detector.states["lateral_lunge"].reps
 					if total_reps != last_total_reps:
 						last_total_reps = total_reps
