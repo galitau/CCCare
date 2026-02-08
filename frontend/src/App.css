@@ -142,6 +142,8 @@ body {
   border-radius: 10px;
   font-size: 1rem;
   margin-bottom: 1rem;
+  background: white;
+  color: #1a202c;
 }
 
 .search-input:focus {
@@ -161,6 +163,7 @@ body {
   cursor: pointer;
   transition: all 0.3s ease;
   background: #f7fafc;
+  color: #1a202c;
 }
 
 .patient-item:hover {
@@ -173,10 +176,17 @@ body {
   color: white;
 }
 
+/* Ensure child text turns white when the item is selected */
+.patient-item.selected .patient-name,
+.patient-item.selected .patient-info {
+  color: white;
+}
+
 .patient-name {
   font-weight: 600;
   font-size: 1.1rem;
   margin-bottom: 0.25rem;
+  color: #1a202c;
 }
 
 .patient-info {
