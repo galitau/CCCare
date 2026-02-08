@@ -104,6 +104,36 @@ export default function useAppState() {
     }
   ]);
 
+  // Training Effect Configuration (easily adjustable)
+  const TRAINING_CONFIG = {
+    // Heart rate zone targets (as % of max HR)
+    heartRateZone: {
+      min: 0.60,  // 60% of max HR (warm-up zone)
+      target: { min: 0.70, max: 0.85 },  // 70-85% target zone
+      max: 1.0    // 100% max HR
+    },
+    // Rep goals for different exercises
+    repGoals: {
+      'Arm Raises': 12,
+      'Leg Lifts': 12,
+      'Squats': 10,
+      'Side Bends': 12,
+      'Knee Raises': 12,
+      'Shoulder Rotations': 15,
+      'Ankle Circles': 15
+    },
+    // Quality scoring
+    qualityWeights: {
+      heartRateAdherence: 0.4,     // 40% - How well stayed in target zone
+      repCompletion: 0.35,          // 35% - How close to rep goals
+      exerciseQuality: 0.25         // 25% - Minimal corrections (feedback)
+    }
+  };
+
+  // Session tracking refs for training effect calculation
+  const sessionHeartRatesRef = useRef([]);
+  const sessionFeedbackCountRef = useRef(0);
+  const sessionRepDataRef = useRef({});
   const vitalsIntervalRef = useRef(null);
   const exerciseIntervalRef = useRef(null);
   const webcamStreamRef = useRef(null);
@@ -145,7 +175,13 @@ export default function useAppState() {
         ws.onmessage = (evt) => {
           try {
             const data = JSON.parse(evt.data);
-            if (data.hr !== undefined) setHeartRate(data.hr);
+            if (data.hr !== undefined) {
+              setHeartRate(data.hr);
+              // Track heart rate for training effect calculation
+              if (sessionActive) {
+                sessionHeartRatesRef.current.push(data.hr);
+              }
+            }
             if (data.spo2 !== undefined) setOxygen(data.spo2);
             if (data.hr !== undefined) setBreathing((0.15*data.hr)-1);
           } catch (e) {
@@ -342,11 +378,14 @@ export default function useAppState() {
 
   const generateFeedback = (angle) => {
     const feedback = [];
+    let hasCorrection = false;
     if (angle < 60) {
       feedback.push("⚠️ Increase range of motion - raise arm higher");
+      hasCorrection = true;
     }
     if (angle > 120) {
       feedback.push("⚠️ Don't overextend - reduce range slightly");
+      hasCorrection = true;
     }
     if (angle >= 60 && angle <= 120) {
       feedback.push("✅ Excellent form - maintain this position");
@@ -359,6 +398,11 @@ export default function useAppState() {
         "Control the movement - don't rush"
       ];
       feedback.push(additionalFeedback[Math.floor(Math.random() * additionalFeedback.length)]);
+      hasCorrection = true;
+    }
+    // Track corrections for quality scoring
+    if (hasCorrection && sessionActive) {
+      sessionFeedbackCountRef.current += 1;
     }
     return feedback;
   };
@@ -379,6 +423,12 @@ export default function useAppState() {
     let currentRepCount = 0;
     let exerciseStartTime = Date.now();
     
+    // Initialize rep tracking for session
+    sessionRepDataRef.current = exercises.reduce((acc, ex) => {
+      acc[ex] = { reps: 0, goal: TRAINING_CONFIG.repGoals[ex] || 10 };
+      return acc;
+    }, {});
+    
     setCurrentExercise(exercises[0]);
     setCurrentReps(0);
     setCurrentFeedback([]);
@@ -398,6 +448,12 @@ export default function useAppState() {
       if (Math.random() > 0.6) {
         currentRepCount++;
         setCurrentReps(currentRepCount);
+        
+        // Track rep completion for training effect
+        const currentExerciseName = exercises[currentExerciseIndex];
+        if (sessionRepDataRef.current[currentExerciseName]) {
+          sessionRepDataRef.current[currentExerciseName].reps = currentRepCount;
+        }
         
         const angle = Math.floor(Math.random() * 180);
         const feedback = generateFeedback(angle);
@@ -494,8 +550,11 @@ export default function useAppState() {
     }
   };
 
-  const startSession = async () => {
-    setSessionActive(true);
+  const startSession = async () => {    // Reset session tracking refs
+    sessionHeartRatesRef.current = [];
+    sessionFeedbackCountRef.current = 0;
+    sessionRepDataRef.current = {};
+        setSessionActive(true);
     setSessionExercises([]);
     setCurrentExercise('--');
     setCurrentReps(0);
@@ -517,6 +576,47 @@ export default function useAppState() {
     }
   };
 
+  const calculateTrainingEffect = () => {
+    const maxHeartRate = 220 - (selectedPatient?.age || 65);
+    const targetZone = TRAINING_CONFIG.heartRateZone.target;
+    
+    // 1. Calculate heart rate adherence (0-1)
+    let hrAdherence = 0;
+    if (sessionHeartRatesRef.current.length > 0) {
+      const validHRs = sessionHeartRatesRef.current.filter(hr => typeof hr === 'number' && hr > 0);
+      if (validHRs.length > 0) {
+        const targetMin = maxHeartRate * targetZone.min;
+        const targetMax = maxHeartRate * targetZone.max;
+        const inZone = validHRs.filter(hr => hr >= targetMin && hr <= targetMax).length;
+        hrAdherence = inZone / validHRs.length;
+      }
+    }
+    
+    // 2. Calculate rep completion ratio (0-1)
+    let repCompletion = 0;
+    const totalGoal = Object.values(sessionRepDataRef.current).reduce((sum, ex) => sum + ex.goal, 0);
+    const totalCompleted = Object.values(sessionRepDataRef.current).reduce((sum, ex) => sum + ex.reps, 0);
+    if (totalGoal > 0) {
+      repCompletion = Math.min(totalCompleted / totalGoal, 1);
+    }
+    
+    // 3. Calculate exercise quality based on minimal corrections (0-1)
+    // Fewer corrections = higher quality
+    const totalReps = totalCompleted;
+    const correctionRatio = totalReps > 0 ? sessionFeedbackCountRef.current / totalReps : 0;
+    const exerciseQuality = Math.max(0, 1 - (correctionRatio * 0.5)); // Cap influence at 50% reduction
+    
+    // 4. Weighted score calculation (0-5 scale)
+    const weights = TRAINING_CONFIG.qualityWeights;
+    const trainingEffect = (
+      hrAdherence * weights.heartRateAdherence +
+      repCompletion * weights.repCompletion +
+      exerciseQuality * weights.exerciseQuality
+    ) * 5; // Scale to 0-5
+    
+    return Math.min(5, Math.max(0, trainingEffect));
+  };
+
   const stopSession = () => {
     setSessionActive(false);
     stopVitalsMonitoring();
@@ -536,14 +636,22 @@ export default function useAppState() {
         .map(ex => `${ex.name} (${ex.reps} reps)`)
         .join(', ');
       
+      // Calculate actual session metrics
+      const validHRs = sessionHeartRatesRef.current.filter(hr => typeof hr === 'number' && hr > 0);
+      const avgHeartRate = validHRs.length > 0 
+        ? Math.round(validHRs.reduce((a, b) => a + b, 0) / validHRs.length)
+        : 0;
+      const maxHeartRate = validHRs.length > 0 ? Math.max(...validHRs) : 0;
+      const trainingEffect = calculateTrainingEffect();
+      
       const newSession = {
         date: new Date(),
-        avgHeartRate: 78,
-        maxHeartRate: 95,
+        avgHeartRate: avgHeartRate || 78,
+        maxHeartRate: maxHeartRate || 95,
         avgOxygen: 97,
         exerciseCompleted: exerciseSummary || "Session incomplete",
-        trainingEffect: 3.2,
-        notes: "Good session, maintained proper form"
+        trainingEffect: parseFloat(trainingEffect.toFixed(1)),
+        notes: "Session complete"
       };
 
       const newSessionWithRPE = { ...newSession, rpe: null };
@@ -564,6 +672,11 @@ export default function useAppState() {
       setCurrentReps(0);
       setCurrentFeedback([]);
       setSessionExercises([]);
+      
+      // Reset session tracking
+      sessionHeartRatesRef.current = [];
+      sessionFeedbackCountRef.current = 0;
+      sessionRepDataRef.current = {};
     }
   };
 
@@ -610,6 +723,10 @@ export default function useAppState() {
     videoRef,
     alerts,
     removeAlert,
-    updateRPE
+    addAlert,
+    updateRPE,
+    wsConnected,
+    hasMongoSession,
+    TRAINING_CONFIG  // Expose config for easy adjustment
   };
 }
