@@ -16,6 +16,10 @@ export default function useAppState() {
   const [sessionExercises, setSessionExercises] = useState([]);
   const [sessionNumber, setSessionNumber] = useState(1);
 
+  const [alerts, setAlerts] = useState([]);
+  const prevOxygenRef = useRef({});  // Track previous oxygen by patientId
+  const alertTimeoutsRef = useRef({}); // Track alert auto-dismiss timeouts
+
   const [patients, setPatients] = useState([
     {
       id: 1,
@@ -181,6 +185,13 @@ export default function useAppState() {
     }
   }, [selectedPatient]);
 
+  // Monitor vitals and trigger alerts for abnormalities
+  useEffect(() => {
+    if (sessionActive && selectedPatient) {
+      checkAndAlertAbnormalities();
+    }
+  }, [heartRate, oxygen, sessionActive, selectedPatient]);
+
   const startVitalsMonitoring = () => {
     // vitals are provided by the backend WebSocket; no local generator.
     // Ensure any previous generator is cleared.
@@ -198,6 +209,54 @@ export default function useAppState() {
     if (vitalsIntervalRef.current) {
       clearInterval(vitalsIntervalRef.current);
       vitalsIntervalRef.current = null;
+    }
+  };
+
+  // Alert management functions
+  const addAlert = (patientName, issue) => {
+    const alertId = Date.now();
+    const newAlert = { id: alertId, patientName, issue, timestamp: new Date() };
+    setAlerts(prev => [newAlert, ...prev]);
+    // No auto-dismiss - user must manually close
+  };
+
+  const removeAlert = (alertId) => {
+    setAlerts(prev => prev.filter(a => a.id !== alertId));
+  };
+
+  // Check for abnormal conditions and create alerts
+  const checkAndAlertAbnormalities = () => {
+    if (!selectedPatient) return;
+    
+    const patientAge = selectedPatient.age;
+    const maxHeartRate = 220 - patientAge;
+    const targetHeartRate = maxHeartRate * 0.7;
+
+    // Check abnormal heart rate
+    if (typeof heartRate === 'number' && heartRate > targetHeartRate) {
+      // Only add if there isn't already an alert for this patient + issue
+      if (!alerts.some(a => a.patientName === selectedPatient.name && a.issue.includes('Abnormal Heart Rate'))) {
+        addAlert(selectedPatient.name, `❤️ Abnormal Heart Rate: ${heartRate} bpm (Target: ${Math.round(targetHeartRate)} bpm)`);
+      }
+    }
+
+    // Check oxygen drop
+    if (typeof oxygen === 'number' && oxygen >= 0) {
+      const prevOx = prevOxygenRef.current[selectedPatient.id];
+      if (prevOx !== undefined && (prevOx - oxygen >= 5)) {
+        // Significant drop of 5% or more
+        if (!alerts.some(a => a.patientName === selectedPatient.name && a.issue.includes('Oxygen Level Drop'))) {
+          addAlert(selectedPatient.name, `💧 Oxygen Level Drop: ${oxygen}% (was ${prevOx}%)`);
+        }
+      }
+      prevOxygenRef.current[selectedPatient.id] = oxygen;
+    }
+
+    // Check for critical oxygen level
+    if (typeof oxygen === 'number' && oxygen < 90) {
+      if (!alerts.some(a => a.patientName === selectedPatient.name && a.issue.includes('Critical Oxygen'))) {
+        addAlert(selectedPatient.name, `💧 Critical Oxygen Level: ${oxygen}% (Critical: <90%)`);
+      }
     }
   };
 
@@ -445,6 +504,8 @@ export default function useAppState() {
     stopSession,
     selectPatient,
     filteredPatients,
-    videoRef
+    videoRef,
+    alerts,
+    removeAlert
   };
 }

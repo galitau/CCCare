@@ -19,7 +19,9 @@ export default function AppView(props) {
     startSession,
     stopSession,
     selectPatient,
-    filteredPatients
+    filteredPatients,
+    alerts,
+    removeAlert
   } = props;
 
   return (
@@ -79,6 +81,27 @@ export default function AppView(props) {
         </div>
 
         <div className="right-panel">
+          {/* Alerts Container */}
+          {alerts.length > 0 && (
+            <div className="alerts-container">
+              {alerts.map((alert) => (
+                <div key={alert.id} className="alert-banner">
+                  <div className="alert-content">
+                    <div className="alert-message">
+                      <strong>{alert.patientName}</strong> - {alert.issue}
+                    </div>
+                  </div>
+                  <button
+                    className="alert-close"
+                    onClick={() => removeAlert(alert.id)}
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
           {!selectedPatient ? (
             <div className="card">
               <div className="welcome-message">
