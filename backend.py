@@ -708,6 +708,77 @@ def draw_text(img, text: str, org: Tuple[int, int], color=(0, 255, 0)) -> None:
 	cv2.putText(img, text, org, cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv2.LINE_AA)
 
 
+EXERCISE_LABELS = {
+	"squat": "Squats",
+	"lateral_lunge": "Dynamic Hip Mobility Lateral Lunge",
+	"chest_press": "Chest Press",
+	"vertical_traction": "Vertical Traction",
+	"hip_raise": "Bent Knee Hip Raise",
+	"airplane": "Airplane Exercise",
+	"front_bridge": "Front Bridge",
+	"alternate_leg_lowers": "Bent Knee Alternate Leg Lowers",
+	"thoracic_rotation": "Thoracic Rotation",
+}
+
+
+def draw_status_window(
+	detector: "ExerciseDetector",
+	last_feedback_by_exercise: Dict[str, str],
+	last_feedback_time: Dict[str, float],
+	now: float,
+	exercises: Tuple[str, ...] = ("squat", "lateral_lunge"),
+	window_name: str = "CareSystem AI - Status",
+) -> None:
+	line_height = 22
+	margin_x = 20
+	margin_y = 24
+	height = margin_y * 2 + (len(exercises) * 2 + 1) * line_height
+	width = 560
+	canvas = np.zeros((height, width, 3), dtype=np.uint8)
+	text_color = (255, 255, 255)
+	cv2.putText(
+		canvas,
+		"Reps & Feedback",
+		(margin_x, margin_y),
+		cv2.FONT_HERSHEY_SIMPLEX,
+		0.7,
+		text_color,
+		2,
+		cv2.LINE_AA,
+	)
+	y = margin_y + line_height
+	for key in exercises:
+		label = EXERCISE_LABELS.get(key, key.replace("_", " ").title())
+		reps = detector.states[key].reps
+		cv2.putText(
+			canvas,
+			f"{label}: {reps}",
+			(margin_x, y),
+			cv2.FONT_HERSHEY_SIMPLEX,
+			0.6,
+			text_color,
+			1,
+			cv2.LINE_AA,
+		)
+		y += line_height
+		feedback = ""
+		if (now - last_feedback_time.get(key, 0.0)) <= 2.0:
+			feedback = last_feedback_by_exercise.get(key, "")
+		if feedback:
+			cv2.putText(
+				canvas,
+				feedback,
+				(margin_x + 18, y),
+				cv2.FONT_HERSHEY_SIMPLEX,
+				0.5,
+				text_color,
+				1,
+				cv2.LINE_AA,
+			)
+		y += line_height
+	cv2.imshow(window_name, canvas)
+
+
 def _landmark_visible(lm, min_visibility: float) -> bool:
 	visibility = getattr(lm, "visibility", None)
 	if visibility is not None and visibility < min_visibility:
@@ -742,6 +813,8 @@ def main() -> None:
 	candidate_hits = 0
 	last_activity_time: Optional[float] = None
 	last_active_user: Optional[str] = None
+	last_feedback_by_exercise = {key: "" for key in detector.states}
+	last_feedback_time = {key: 0.0 for key in detector.states}
 	if not USE_TASKS:
 		with mp_pose.Pose(
 			model_complexity=1,
@@ -796,6 +869,12 @@ def main() -> None:
 						last_activity_time = now
 						lm = extract_landmarks(results.pose_landmarks.landmark)
 						ex_name, ex_state, status_text = detector.process(lm)
+						if detector.exercise in ("squat", "lateral_lunge"):
+							parts = [p for p in status_text.split(" | ") if not p.startswith("Conf:")]
+							feedback = parts[1] if len(parts) > 1 else ""
+							if feedback:
+								last_feedback_by_exercise[detector.exercise] = feedback
+								last_feedback_time[detector.exercise] = now
 						full_body_ok = True
 					else:
 						full_body_ok = False
@@ -820,6 +899,7 @@ def main() -> None:
 					draw_text(image, "No pose detected", (20, 60), (0, 0, 255))
 
 				draw_text(image, "Keys: A Auto | 1 Squat | 2 Lunge | Q Quit", (20, h - 20))
+				draw_status_window(detector, last_feedback_by_exercise, last_feedback_time, now)
 
 				cv2.imshow("CareSystem AI - CV", image)
 				key = cv2.waitKey(1) & 0xFF
@@ -904,6 +984,12 @@ def main() -> None:
 					last_activity_time = now
 					lm = extract_landmarks(landmarks)
 					ex_name, ex_state, status_text = detector.process(lm)
+					if detector.exercise in ("squat", "lateral_lunge"):
+						parts = [p for p in status_text.split(" | ") if not p.startswith("Conf:")]
+						feedback = parts[1] if len(parts) > 1 else ""
+						if feedback:
+							last_feedback_by_exercise[detector.exercise] = feedback
+							last_feedback_time[detector.exercise] = now
 					total_reps = detector.states["squat"].reps + detector.states["lateral_lunge"].reps
 					if total_reps != last_total_reps:
 						last_total_reps = total_reps
@@ -922,6 +1008,7 @@ def main() -> None:
 					draw_text(image, "No pose detected", (20, 60), (0, 0, 255))
 
 				draw_text(image, "Keys: A Auto | 1 Squat | 2 Lunge | Q Quit", (20, h - 20))
+				draw_status_window(detector, last_feedback_by_exercise, last_feedback_time, now)
 
 				cv2.imshow("CareSystem AI - CV", image)
 				key = cv2.waitKey(1) & 0xFF
