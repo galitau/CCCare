@@ -247,10 +247,35 @@ export default function useAppState() {
   };
 
   // Alert management functions
+  const playPingSound = () => {
+    try {
+      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+
+      // Ping sound parameters
+      oscillator.frequency.value = 800; // High pitch for ping
+      oscillator.type = 'sine';
+
+      // Fade in and out
+      gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
+
+      oscillator.start(audioContext.currentTime);
+      oscillator.stop(audioContext.currentTime + 0.2);
+    } catch (error) {
+      console.log('Could not play ping sound:', error);
+    }
+  };
+
   const addAlert = (patientName, issue) => {
     const alertId = Date.now();
     const newAlert = { id: alertId, patientName, issue, timestamp: new Date() };
     setAlerts(prev => [newAlert, ...prev]);
+    playPingSound(); // Play ping sound on alert
     // No auto-dismiss - user must manually close
   };
 
