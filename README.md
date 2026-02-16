@@ -19,6 +19,15 @@ Traditional rehabilitation monitoring is resource-intensive, often requiring one
 
 ---
 
+## View It Here
+
+
+https://github.com/user-attachments/assets/21fcf672-3696-443f-a9c0-0a0e148113f7
+
+
+
+---
+
 ## Key Features
 
 ### 1. Privacy-First Biometric Identification
@@ -106,27 +115,27 @@ npm run dev
 We plan to evolve CareSystem AI from movement tracking toward predictive rehabilitation intelligence.
 
 ### Gamification & Engagement
-- [ ] AR overlays with interactive virtual targets  
-- [ ] Game-like progression systems to increase adherence  
-- [ ] Personalized motivational feedback loops  
+- AR overlays with interactive virtual targets  
+- Game-like progression systems to increase adherence  
+- Personalized motivational feedback loops  
 
 ---
 
 ### Predictive Recovery Analytics
-- [ ] Machine learning models trained on historical patient data  
-- [ ] Plateau detection and automated intervention suggestions  
-- [ ] Adaptive exercise intensity recommendations  
+- Machine learning models trained on historical patient data  
+- Plateau detection and automated intervention suggestions  
+- Adaptive exercise intensity recommendations  
 
 ---
 
 ### Automated Clinical Documentation
-- [ ] Session metric summarization  
-- [ ] EHR-ready export pipelines  
+- Session metric summarization  
+- EHR-ready export pipelines  
 
 ---
 
 ### Platform Expansion
-- [ ] Multi-clinic deployment scaling  
-- [ ] Role-based clinician dashboards  
-- [ ] Secure interoperability with hospital systems  
+- Multi-clinic deployment scaling  
+- Role-based clinician dashboards  
+- Secure interoperability with hospital systems  
 
