@@ -20,9 +20,12 @@ Traditional rehabilitation monitoring is resource-intensive, often requiring one
 ---
 
 ## View It Here
+<img width="804" height="444" alt="Screenshot 2026-02-15 193630" src="https://github.com/user-attachments/assets/82ac5efc-fa21-49fb-93ec-ab052b88fbcf" />
 
+<img width="815" height="461" alt="Screenshot 2026-02-15 200312" src="https://github.com/user-attachments/assets/db704f56-69cf-4721-8608-42beabd7a584" />
 
-https://github.com/user-attachments/assets/21fcf672-3696-443f-a9c0-0a0e148113f7
+https://github.com/user-attachments/assets/2c45050d-31d8-4083-870d-132cf382c1e5
+
 
 
 
